@@ -829,3 +829,28 @@ export function TextField({ label, micro, value, onInput, onEnter, placeholder, 
 export function UiHosts() {
   return html`<${Fragment}><${DialogHost} /><${TooltipLayer} /><//>`;
 }
+
+/** Spectator-slot indicator (issue #76): 👁 count chip; click/tap toggles the name list, hover shows a title tip. */
+export function SpectatorChip({ observers, class: cls }) {
+  const list = (Array.isArray(observers) ? observers : []).filter((o) => o && o.playerId);
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('pointerdown', close);
+    return () => document.removeEventListener('pointerdown', close);
+  }, [open]);
+  if (!list.length) return null;
+  const names = list.map((o) => (o.name || '博士') + (o.connected === false ? '（离线）' : ''));
+  return html`<span class=${cx('obschip-anchor', cls)} ref=${ref}>
+    <button type="button" class="obschip" title=${'观战中：' + names.join('、')} aria-label=${'观战中 ' + list.length + ' 人'}
+      onClick=${() => setOpen(!open)}>
+      <${Icon} name="eye" />${list.length}
+    </button>
+    ${open ? html`<div class="obschip__pop" role="status">
+      <b class="obschip__head num">观战中 ${list.length}</b>
+      ${names.map((n) => html`<span key=${n} class="obschip__name">${n}</span>`)}
+    </div>` : null}
+  </span>`;
+}

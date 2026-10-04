@@ -78,6 +78,8 @@ export const initialState = Object.freeze({
   me: { playerId: null, name: '', token: null },
   session: { entered: false },
   room: null,
+  /** true while this client sits in one of the room's spectator slots (room.state.observers; no m.private arrives) */
+  observing: false,
   match: emptyMatch(),
   ticker: [],
   emotes: [],

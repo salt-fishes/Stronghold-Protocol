@@ -277,3 +277,8 @@
 .ready-count__icons .icon.is-on { color: var(--mint-400); filter: drop-shadow(0 0 4px var(--mint-glow)); }
 
 .room-bar .btn--xl { min-width: 3.2rem; letter-spacing: .2em; }
+/* spectator slots (issue #76): the no-spectate chip for the host */
+.room-bar__noobserve { font-size: .14rem; }
+.room-bar__noobserve .icon { width: .18rem; height: .18rem; vertical-align: -.03rem; margin-right: .04rem; }
+.room-ping__row { display: flex; align-items: center; gap: .08rem; }
+.room-ping__row { display: flex; align-items: center; gap: .08rem; }

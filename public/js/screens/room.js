@@ -10,7 +10,7 @@
 import { useEffect, useRef, useState } from '../../vendor/hooks.module.js';
 import { DIFFICULTIES, DIFFICULTY_NAMES, DIFFICULTY_COLORS, MAX_SEATS } from '../../../shared/constants.js';
 import {
-  html, Button, Icon, MicroLabel, PingPill, AvatarFrame, DifficultyTag, DifficultyIcon, Tooltip, confirmDialog, doctorNo,
+  html, Button, Icon, MicroLabel, PingPill, AvatarFrame, DifficultyTag, DifficultyIcon, Tooltip, confirmDialog, doctorNo, SpectatorChip,
 } from '../ui/components.js';
 import { toast, toastError } from '../ui/toasts.js';
 import { copyText } from '../ui/clipboard.js';
@@ -48,13 +48,16 @@ export function roomFacts(room, myId) {
   const mine = occupied.find((s) => s.playerId === myId) || null;
   const isHost = room?.hostId != null && room.hostId === myId;
   const others = humans.filter((s) => s.playerId !== myId);
+  const observers = Array.isArray(room?.observers) ? room.observers.filter((o) => o && typeof o === 'object') : [];
+  // a spectator slot: no seat, no ready button — the Game screen follows the fields on its own (screens/game.js)
+  const observing = !mine && myId != null && observers.some((o) => o.playerId === myId);
   // The host never readies: starting the match is the host's ready (server rule), so the count
   // treats the host as ready — "已就绪 0/1" next to "准许进入模拟" would contradict itself.
   const isReady = (s) => !!s.ready || s.playerId === room?.hostId;
   const readyHumans = humans.filter(isReady).length;
   const othersReady = others.every((s) => s.ready && s.connected !== false);
   return {
-    seats, occupied, humans, mine, isHost, readyHumans, isReady,
+    seats, occupied, humans, mine, isHost, readyHumans, isReady, observers, observing,
     emptySeats: seats.filter((s) => !s).length,
     canStart: isHost && othersReady && !!mine,
     othersReady,
@@ -195,6 +198,13 @@ export function RoomScreen() {
   const addBot = () => run('add', () => net.request('room.addBot', {}));
   const removeBot = (seat) => run(`rm${seat}`, () => net.request('room.removeBot', { seat }));
   const setDifficulty = (difficulty) => run('diff', () => net.request('room.setDifficulty', { difficulty }));
+  // 局间补位: an observer takes a free seat (the room is back in LOBBY) — the server moves the slot into a seat
+  const joinGame = () => run('joinGame', async () => {
+    await net.request('room.join', { code: room.code });
+    // the room.state of the promotion is ordered before the ok reply: still observing = the seat was taken meanwhile
+    if (store.get().observing) toast('座位已被其他观战者占用', 'warn');
+  });
+
   const leave = async () => {
     if (inFlight.current) return;
     const othersHere = facts.humans.some((s) => s.playerId !== me.playerId);
@@ -218,6 +228,8 @@ export function RoomScreen() {
 
   const statusLine = !online
     ? html`<span class="t-orange"><${Icon} name="wifiOff" />连接中断，正在重连…</span>`
+    : facts.observing
+      ? html`<span class="t-lo"><${Icon} name="eye" />以观战身份加入 · 对局开始后自动进入观战</span>`
     : !coop
       ? html`<span class="t-mint">*模拟协议已就绪，准许进入模拟</span>`
     : facts.isHost
@@ -235,7 +247,12 @@ export function RoomScreen() {
           <${Button} variant="danger" size="lg" square=${true} icon="exit" loading=${busy === 'leave'} onClick=${leave} aria-label="离开同盟" />
         <//>
         <div class="room-ping">
-          <${PingPill} ms=${conn.ping} online=${online} />
+          ${(Array.isArray(room.observers) && room.observers.length)
+            ? html`<div class="room-ping__row">
+                <${PingPill} ms=${conn.ping} online=${online} />
+                <${SpectatorChip} observers=${room.observers} />
+              </div>`
+            : html`<${PingPill} ms=${conn.ping} online=${online} />`}
           <${MicroLabel}>当前延迟<//>
         </div>
         <${GuideButton} class="room-guide" variant="secondary" />
@@ -268,6 +285,7 @@ export function RoomScreen() {
       <div class="room-bar__left">
         <span class="room-bar__label">模拟难度<${MicroLabel}>DIFFICULTY<//></span>
         <${DifficultyPicker} room=${room} isHost=${facts.isHost} busy=${busy} onPick=${setDifficulty} />
+        ${coop && room.spectate === false ? html`<span class="t-dim room-bar__noobserve"><${Icon} name="eye" />已禁止观战</span>` : null}
       </div>
       <div class="room-bar__center">
         <div class="ready-count" hidden=${!coop}>
@@ -280,13 +298,19 @@ export function RoomScreen() {
         <div class="room-bar__status">${statusLine}</div>
       </div>
       <div class="room-bar__right">
-        <${LoadoutButton} from="room" size="lg" class="room-loadout" />
+        ${facts.observing
+          ? (room.inMatch || facts.emptySeats === 0
+              ? html`<span class="seat__state t-lo"><${Icon} name="eye" />观战中</span>`
+              : html`<${Tooltip} text="占用一个空座位，下一局作为玩家参加">
+                  <${Button} variant="primary" size="xl" icon="users" loading=${busy === 'joinGame'} disabled=${!online} onClick=${joinGame}>加入游戏<//>
+                <//>`)
+          : html`<${LoadoutButton} from="room" size="lg" class="room-loadout" />
         ${facts.isHost
           ? html`<${Tooltip} text=${facts.canStart ? null : '仍有博士未准备就绪'}>
               <${Button} variant="primary" size="xl" icon="play" loading=${busy === 'start'} disabled=${!facts.canStart || !online} onClick=${start}>开始模拟<//>
             <//>`
           : html`<${Button} variant=${myReady ? 'primary' : 'secondary'} size="xl" icon=${myReady ? 'check' : 'hourglass'} active=${myReady}
-              loading=${busy === 'ready'} disabled=${!online || !facts.mine} onClick=${toggleReady}>${myReady ? '已就绪' : '准备就绪'}<//>`}
+              loading=${busy === 'ready'} disabled=${!online || !facts.mine} onClick=${toggleReady}>${myReady ? '已就绪' : '准备就绪'}<//>`}`}
       </div>
     </footer>
   </div>`;

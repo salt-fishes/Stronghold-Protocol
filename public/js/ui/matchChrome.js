@@ -5,7 +5,7 @@
 // off. 放弃模拟: g.leave then room.leave (the platform treats it as a quit), back to the lobby.
 
 import { useState } from '../../vendor/hooks.module.js';
-import { html, Button, Modal, PingPill, DifficultyTag, Countdown, MicroLabel } from './components.js';
+import { html, Button, Modal, PingPill, DifficultyTag, Countdown, MicroLabel, SpectatorChip } from './components.js';
 import { actions } from './gameActions.js';
 import { toastError } from './toasts.js';
 import { net } from '../net.js';
@@ -54,9 +54,9 @@ export async function quitMatch() {
 
 /**
  * Exit confirmation modal.
- * @param {{ open: boolean, onClose: Function, solo: boolean, onAway?: Function }} props
+ * @param {{ open: boolean, onClose: Function, solo: boolean, onAway?: Function, observing?: boolean }} props
  */
-export function ExitModal({ open, onClose, solo, onAway }) {
+export function ExitModal({ open, onClose, solo, onAway, observing = false }) {
   const [busy, setBusy] = useState(null);
   const quit = async () => {
     setBusy('quit');
@@ -64,6 +64,30 @@ export function ExitModal({ open, onClose, solo, onAway }) {
     setBusy(null);
     onClose();
   };
+  // 观战者没有席位：退出观战 = 离开同盟（稍后可凭密钥重新加入，对局进行中加入会再次进观战位）
+  const leaveSpectate = async () => {
+    setBusy('quit');
+    try {
+      await net.request('room.leave', {});
+    } catch (err) {
+      if (err?.code !== 'NOT_IN_ROOM' && err?.code !== 'OFFLINE') toastError(err);
+    } finally {
+      store.set({ room: null, match: emptyMatch(), observing: false });
+      setBusy(null);
+      onClose();
+    }
+  };
+  if (observing) {
+    return html`<${Modal} open=${open} onClose=${onClose} tone="red" title="退出观战" micro="LEAVE SPECTATING" width="6.8rem"
+      actions=${html`
+        <${Button} variant="secondary" onClick=${onClose}>继续观战<//>
+        <${Button} variant="danger" icon="exit" loading=${busy === 'quit'} onClick=${leaveSpectate}>退出并离开同盟<//>`}>
+      <div class="exitm">
+        <p>你正在以观战身份围观本局，随时可以从团队面板切换想看的战场。</p>
+        <p class="t-lo">退出会离开同盟；稍后用同盟密钥重新加入即可（对局进行中加入会再次进入观战位）。</p>
+      </div>
+    <//>`;
+  }
   const away = async () => {
     setBusy('away');
     const ok = await actions.autoplay(true);
@@ -109,7 +133,12 @@ export function StepHeader({ step, of, title, micro, pub, total, onExit }) {
     <div class="stephead__left">
       <${Button} variant="danger" size="lg" square=${true} icon="exit" onClick=${onExit} aria-label="离开" title="离开" />
       <div class="stephead__meta">
-        <${PingPill} ms=${conn.ping} online=${conn.status === 'online'} />
+        ${Array.isArray(pub?.observers) && pub.observers.length
+          ? html`<div class="stephead__conn">
+              <${PingPill} ms=${conn.ping} online=${conn.status === 'online'} />
+              <${SpectatorChip} observers=${pub.observers} />
+            </div>`
+          : html`<${PingPill} ms=${conn.ping} online=${conn.status === 'online'} />`}
         ${pub?.difficulty ? html`<${DifficultyTag} difficulty=${pub.difficulty} />` : null}
       </div>
     </div>

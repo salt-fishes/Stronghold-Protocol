@@ -350,6 +350,11 @@ export class Match {
     this.runner = null;
     /** playerId → fieldId */
     this.watchers = new Map();
+    /** The room's spectator slots (lobby opts.observers): playerId → display name, without a PlayerState. They may
+     *  only send g.watch; sendTo / _sendStart / _humansShowing let them through, every seat-based path ignores them. */
+    this.observers = new Map((Array.isArray(opts.observers) ? opts.observers : [])
+      .map((o) => (typeof o === 'object' && o ? [String(o.playerId), String(o.name ?? '')] : [String(o), '']))
+      .filter(([pid]) => pid));
     this.lastResults = new Map();
     this.unitePlan = null;
     /** server-run 联防: the leakers' counts last published (_uniteTick) */
@@ -389,7 +394,15 @@ export class Match {
    */
   handle(playerId, msg) {
     const ps = this.players.get(playerId);
-    if (!ps || ps.isBot || ps.left) return fail(ERR.NOT_IN_ROOM);
+    if (!ps) {
+      // spectator slots: an observer holds no PlayerState — g.watch is the only intent it may send
+      if (!this.observers.has(playerId)) return fail(ERR.NOT_IN_ROOM);
+      if (this.disposed || this.ended) return fail(ERR.WRONG_PHASE);
+      if (!msg || typeof msg !== 'object' || msg.t !== 'g.watch') return fail(ERR.BAD_MSG, 'observers can only watch');
+      if (typeof msg.fieldId !== 'string') return fail(ERR.BAD_TARGET);
+      return this._watchAsObserver(playerId, msg.fieldId);
+    }
+    if (ps.isBot || ps.left) return fail(ERR.NOT_IN_ROOM);
     if (this.disposed || this.ended) {
       // a battle report that crossed the match end (the last b.progress of a field) is stale: ignored, never an error
       // (DESIGN §14 — an error frame without a rid would surface as a toast in the browser)
@@ -405,6 +418,12 @@ export class Match {
     }
     try { this.flush(); } catch (e) { this.reportError('flush', e); }
     if (res && typeof res === 'object' && res.error) return res;
+    return OK;
+  }
+
+  /** The lobby registers a mid-match spectator (joinObserver → 中途观战). Optional platform hook. */
+  addObserver(playerId, name = '') {
+    if (typeof playerId === 'string' && playerId) this.observers.set(playerId, String(name ?? ''));
     return OK;
   }
 
@@ -669,7 +688,7 @@ export class Match {
   sendTo(playerId, msg) {
     if (this.disposed) return false;
     const ps = this.players.get(playerId);
-    if (!ps || ps.isBot || ps.left) return false;
+    if (ps ? (ps.isBot || ps.left) : !this.observers.has(playerId)) return false;
     try { return !!this.sendFn(playerId, msg); } catch (e) { this.reportError('send', e); return false; }
   }
 
@@ -840,6 +859,8 @@ export class Match {
         if (pr) v.progress = pr;
         return v;
       }),
+      // the spectator slots (issue #76): the whole table sees who is watching, for the whole match
+      observers: [...this.observers].map(([playerId, name]) => ({ playerId, name })),
     };
     if (this.teamLp != null) v.teamLp = Math.max(0, Math.round(this.teamLp));
     // 最终攻势 / 隐秘核心: when the overtime drain starts (ms epoch; `deadline` is the level's 120 s countdown)
@@ -971,6 +992,34 @@ export class Match {
     ps.lastEmoteAt = now;
     this.broadcast({ t: 'm.emote', playerId: ps.playerId, id });
     return OK;
+  }
+
+  /** g.watch from a spectator slot: the same routes as watch() minus everything that needs a PlayerState — an
+   *  observer has no own field, is never fighting (the boss-group secrecy rule does not apply), and may watch
+   *  every field of the match plus the prep scouting views. */
+  _watchAsObserver(playerId, fieldId) {
+    if (this.clientCombat && this.fields.length && this.fields.some((x) => x.cc)) {
+      const f = this.fields.find((x) => x.fieldId === fieldId) || null;
+      if (!f) return fail(ERR.BAD_TARGET, 'no such field');
+      this.watchers.set(playerId, f.fieldId);
+      this.sendTo(playerId, this._startMsg(f, playerId, { watch: true }));
+      return OK;
+    }
+    const f = this.fields.find((x) => x.fieldId === fieldId);
+    if (f) {
+      this.watchers.set(playerId, fieldId);
+      this._sendField(playerId, fieldId);
+      return OK;
+    }
+    if (fieldId.startsWith('n:')) {
+      if (this.fields.length) return fail(ERR.BAD_TARGET, 'no such field');
+      const target = this.players.get(fieldId.slice(2));
+      if (!target || !target.alive) return fail(ERR.BAD_TARGET);
+      this.watchers.delete(playerId);
+      this.sendTo(playerId, this.prepFieldMeta(target));
+      return OK;
+    }
+    return fail(ERR.BAD_TARGET);
   }
 
   watch(ps, fieldId) {
@@ -2083,16 +2132,21 @@ export class Match {
 
   _sendStart(pid, f, opts = {}) {
     const ps = this.players.get(pid);
-    if (!ps || ps.isBot || ps.left || !ps.connected) return false;
+    // an observer has no PlayerState and no connection flag on the match side: the platform's send drops it when gone
+    if (ps ? (ps.isBot || ps.left || !ps.connected) : !this.observers.has(pid)) return false;
     return this.sendTo(pid, this._startMsg(f, pid, opts));
   }
 
-  /** Humans currently shown a field (its players and its watchers). */
+  /** Humans currently shown a field (its players, its watchers and the observers watching it). */
   _humansShowing(f) {
     const out = new Set();
     for (const pid of f.players) out.add(pid);
     for (const [pid, fid] of this.watchers) if (fid === f.fieldId) out.add(pid);
-    return [...out].filter((pid) => { const ps = this.players.get(pid); return ps && !ps.isBot && !ps.left; });
+    return [...out].filter((pid) => {
+      if (this.observers.has(pid)) return true;
+      const ps = this.players.get(pid);
+      return !!ps && !ps.isBot && !ps.left;
+    });
   }
 
   /** Give every field its authority (a connected human) or run it on the server. */
@@ -3061,6 +3115,7 @@ export class Match {
     this.markPublic();
     try { this.flush(true); } catch (e) { this.reportError('flush', e); }
     for (const ps of this.order) if (!ps.isBot && !ps.left) this.sendTo(ps.playerId, { ...result, playerId: ps.playerId });
+    for (const pid of this.observers.keys()) this.sendTo(pid, { ...result, playerId: pid });
     const { t, ...summary } = result;
     void t;
     summary.errors = this.errorCount;

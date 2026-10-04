@@ -100,7 +100,17 @@ function schedulePendingJoin() {
     try {
       await net.request('room.join', { code });
     } catch (err) {
-      toastError(err);
+      // 满员 / 对局进行中：fall back to the room's spectator slots (中途观战) when the host allows them
+      if ((err?.code === 'ROOM_FULL' || err?.code === 'ROOM_STARTED') && s.room == null) {
+        try {
+          await net.request('room.join', { code, asObserver: true });
+          toast('同盟已满或对局进行中，已以观战身份进入', 'info');
+        } catch (err2) {
+          toastError(err2);
+        }
+      } else {
+        toastError(err);
+      }
     } finally {
       joinInFlight = false;
       clearPendingJoin();
@@ -129,7 +139,7 @@ function backToLobby() {
   clearTimeout(restoreTimer);
   const s = store.get();
   if (s.room || s.match.public) closeAllDialogs();
-  store.set({ room: null, match: emptyMatch(), ticker: [], emotes: [] });
+  store.set({ room: null, match: emptyMatch(), observing: false, ticker: [], emotes: [] });
   store.patch('ui', { restoring: false });
 }
 
@@ -168,16 +178,18 @@ function onRoomState(msg) {
   roomStateAt = Date.now();
   const myId = store.get().me.playerId;
   const seats = Array.isArray(room.seats) ? room.seats : [];
-  if (myId != null && seats.length && !seats.some((s) => s && s.playerId === myId)) {
+  const observerRow = myId != null && Array.isArray(room.observers)
+    ? room.observers.find((o) => o && o.playerId === myId) : null;
+  if (myId != null && seats.length && !seats.some((s) => s && s.playerId === myId) && !observerRow) {
     // We are no longer seated (kicked / left elsewhere).
     if (store.get().room) toast('你已不在该同盟中', 'warn');
-    store.set({ room: null, match: emptyMatch() });
+    store.set({ room: null, match: emptyMatch(), observing: false });
     return;
   }
   const prevRoom = store.get().room;
   // A (new) match starts: forget the previous match's state so stale results never show.
   if (room.inMatch && !(prevRoom && prevRoom.inMatch && prevRoom.code === room.code)) store.set({ match: emptyMatch() });
-  store.set({ room });
+  store.set({ room, observing: !!observerRow });
   if (room.mode === 'coop' && typeof room.code === 'string') rememberRoom(room.code);
   maybeFinishRestore();
 }

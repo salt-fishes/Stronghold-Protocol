@@ -6,6 +6,9 @@ export const PROTOCOL_VERSION = 1;
 export const APP_VERSION = '0.1.2';
 
 export const MAX_SEATS = 4;
+/** Spectator slots per room (room.create `spectate` on, seats full or the match running): rooms hold at most
+ * MAX_SEATS + OBSERVER_MAX sessions; observers never take seats. */
+export const OBSERVER_MAX = 4;
 export const ROOM_CODE_LEN = 4;
 export const NAME_MAX_LEN = 12;
 

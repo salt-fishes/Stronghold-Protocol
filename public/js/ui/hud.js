@@ -25,7 +25,7 @@
 
 import { useRef } from '../../vendor/hooks.module.js';
 import { PHASE } from '../../../shared/constants.js';
-import { html, Button, Icon, PingPill, Countdown, Tooltip, MicroLabel, DifficultyTag, useTicker } from './components.js';
+import { html, Button, Icon, PingPill, Countdown, Tooltip, MicroLabel, DifficultyTag, useTicker, SpectatorChip } from './components.js';
 import { Sprite, LpTower, GIcon, LocalSprite } from './gameComponents.js';
 import { localAsset } from '../data.js';
 import { serverNow } from '../store.js';
@@ -316,7 +316,8 @@ export function TopBar({ pub, priv, conn, hud, total, drawer, onExit, onDrawer, 
   const pending = !boss && Number.isFinite(lp) && live && live.pending > 0 ? Math.min(lp, live.pending) : 0;
   const hidden = phase === PHASE.HIDDEN_CORE || (Number.isFinite(pub?.lastRound) && pub.round > pub.lastRound);
   const roundText = hidden ? '??' : pub?.round > 0 ? String(pub.round) : '--';
-  const showReady = phase === PHASE.PREP && priv?.alive !== false;
+  // priv == null: a spectator slot (no m.private) — no ready toggle
+  const showReady = phase === PHASE.PREP && priv != null && priv?.alive !== false;
   // boss rounds: the overtime warning follows the clock (4 Hz while live; frozen while paused)
   const otLive = boss && Number(pub?.overtimeAt) > 0;
   useTicker(otLive && frozenAt == null ? 250 : 0);
@@ -329,11 +330,17 @@ export function TopBar({ pub, priv, conn, hud, total, drawer, onExit, onDrawer, 
   const btn = checkButtons({ pen, penAvail, infoOpen: !!drawer });
   const onLeft = () => (pen ? onPen(false) : onDrawer('info'));
   const onRight = () => (pen ? onPen(false) : penAvail ? onPen(true) : null);
+  const observers = Array.isArray(pub?.observers) ? pub.observers.filter((o) => o && o.playerId) : [];
   return html`<header class=${cx('gtop', pen && 'is-pen')}>
     <div class="gtop__left">
       <${Button} variant="danger" size="lg" square=${true} icon="exit" onClick=${onExit} aria-label="离开" title="离开 / 暂离" class="gtop__exit tapx" />
       <div class="gtop__meta">
-        <${PingPill} ms=${conn?.ping} online=${conn?.status === 'online'} />
+        ${observers.length
+          ? html`<div class="gtop__pingrow">
+              <${PingPill} ms=${conn?.ping} online=${conn?.status === 'online'} />
+              <${SpectatorChip} observers=${observers} />
+            </div>`
+          : html`<${PingPill} ms=${conn?.ping} online=${conn?.status === 'online'} />`}
         ${pub?.difficulty ? html`<${DifficultyTag} difficulty=${pub.difficulty} size="sm" />` : null}
       </div>
     </div>

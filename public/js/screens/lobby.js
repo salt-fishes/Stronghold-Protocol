@@ -217,6 +217,7 @@ export function LobbyScreen() {
   const conn = useStore((s) => s.connection, shallowEqual);
   useData('config');
   const [roomMode, setRoomMode] = useState(() => (loadPref('lobby.mode', 'coop') === 'solo' ? 'solo' : 'coop'));
+  const [spectate, setSpectate] = useState(() => loadPref('lobby.spectate', true) !== false);
   const [difficulty, setDifficulty] = useState(() => {
     const d = loadPref('lobby.difficulty', 'FUNNY');
     return DIFFICULTIES.includes(d) ? d : 'FUNNY';
@@ -244,11 +245,23 @@ export function LobbyScreen() {
       if (alive.current) setBusy(null);
     }
   };
-  const create = () => run('create', () => net.request('room.create', { mode: roomMode, difficulty }));
+  const create = () => run('create', () => net.request('room.create', { mode: roomMode, difficulty, ...(roomMode === 'coop' ? { spectate } : {}) }));
   const join = (c = code) => {
     const k = normalizeCode(c);
     if (!CODE_RE.test(k)) { toast(`同盟密钥为 ${ROOM_CODE_LEN} 位字母或数字`, 'warn'); return; }
-    run('join', () => net.request('room.join', { code: k }));
+    run('join', async () => {
+      try {
+        await net.request('room.join', { code: k });
+      } catch (err) {
+        // 满员 / 对局进行中：fall back to the room's spectator slots (中途观战) when the host allows them
+        if (err?.code === 'ROOM_FULL' || err?.code === 'ROOM_STARTED') {
+          toast('同盟已满或对局进行中，正在以观战身份进入…', 'info');
+          await net.request('room.join', { code: k, asObserver: true });
+          return;
+        }
+        throw err;
+      }
+    });
   };
   const backToTitle = () => {
     identity.setEntered(false);
@@ -317,6 +330,10 @@ export function LobbyScreen() {
               ? html`<span>${roomMode === 'solo' ? '创建后即可开始模拟' : '创建后可邀请好友或添加 AI 队友'}</span>`
               : html`<${Spinner} size="sm" label="CONNECTING" />`}
           </div>
+          ${roomMode === 'coop' ? html`<label class="create-box__spectate">
+            <input type="checkbox" checked=${spectate} onChange=${(e) => { const on = !!e.currentTarget.checked; setSpectate(on); savePref('lobby.spectate', on); }} />
+            <span class="t-lo">允许观战<span class="t-dim">（满员或对局进行时加入的人进观战位，最多 4 人）</span></span>
+          </label>` : null}
         </div>
       </section>
     </div>

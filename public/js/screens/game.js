@@ -120,6 +120,7 @@ const keepEarly = (e) => Array.isArray(e) && (STATE_EV.has(e[0]) || fxForm(e) !=
 
 /** Router for the in-match screens. */
 export function GameScreen() {
+  const observing = useStore((s) => s.observing);      // a spectator slot: no briefing / draft, straight to watching
   const pub = useStore((s) => s.match.public);
   const hasResult = useStore((s) => !!s.match.result);
   const ended = useStore((s) => !!s.room && !s.room.inMatch && !!s.match.public);
@@ -135,6 +136,9 @@ export function GameScreen() {
   const mode = phaseMode(pub.phase);
   let body;
   if (hasResult || mode === 'result') body = html`<${ResultScreen} />`;
+  // an observer is refused every match intent: the briefing / draft screens would be dead buttons — show the
+  // match screen instead (its loading state becomes the 观战中 waiting panel below)
+  else if (observing && (mode === 'briefing' || mode === 'draft')) body = html`<${MatchScreen} />`;
   else if (mode === 'briefing') body = html`<${BriefingScreen} />`;
   else if (mode === 'draft') body = html`<${BandDraftScreen} />`;
   else body = html`<${MatchScreen} />`;
@@ -184,6 +188,7 @@ function MatchScreen() {
   const conn = useStore((s) => s.connection, shallowEqual);
   const emotes = useStore((s) => s.emotes);
   const roomSolo = useStore((s) => s.room?.mode === 'solo');
+  const observing = useStore((s) => s.observing);        // a spectator slot: no m.private, no own field
   const gd = useGameData();
 
   const hostRef = useRef(null);
@@ -682,6 +687,18 @@ function MatchScreen() {
     setWatchWho(null);
   }, []);
 
+  // a spectator slot has no own field: follow m.public.fields — the first live one, else the first — whenever the
+  // watched field is gone (phase changes clear the server-side watcher map; setWatching(null) in the phase effect
+  // matches it, this effect picks the next field from there)
+  const pubFields = Array.isArray(pub?.fields) ? pub.fields : [];
+  const pubFieldsKey = pubFields.map((f) => `${f && f.fieldId}:${f && f.live ? 1 : 0}`).join('|');
+  useEffect(() => {
+    if (!observing || !pubFields.length) return;
+    if (watching && pubFields.some((f) => f && f.fieldId === watching)) return;
+    const pick = pubFields.find((f) => f && f.live) || pubFields[0];
+    if (pick && pick.fieldId) requestWatch(pick.fieldId);
+  }, [observing, watching, pubFieldsKey, requestWatch]);
+
   const watchPlayer = useCallback((p) => {
     const L = live.current;
     if (isClientCombat(L.pub)) {
@@ -1179,7 +1196,9 @@ function MatchScreen() {
   return html`<div class=${cx('screen', 'gm', `gm--${mode}`, drag && 'is-dragging', collapsed && 'is-collapsed', sp && 'has-sp', pen && 'is-pen', readyWhy && 'has-readywhy')}
       data-camera=${pen ? 'pen' : camKind}>
     <div class="gm__field" ref=${hostRef} onContextMenu=${(e) => e.preventDefault()}></div>
-    ${viewKind === 'loading' ? html`<div class="gm__loading"><${Spinner} label="LOADING FIELD" /></div>` : null}
+    ${viewKind === 'loading' ? html`<div class="gm__loading">${observing
+      ? html`<div class="gm__observing-wait brackets" role="status"><${GIcon} name="eye" /><span>观战中 · 等待战斗开始</span></div>`
+      : html`<${Spinner} label="LOADING FIELD" />`}</div>` : null}
     <div class="gm__vignette" aria-hidden="true"></div>
     ${tempNotice ? html`<${TempRowNotice} view=${view} count=${temp.count} items=${temp.items} label=${!drag && !facing}
       ready=${phase === PHASE.PREP && !!priv?.ready} />` : null}
@@ -1205,7 +1224,7 @@ function MatchScreen() {
 
       ${watchingOther && !combat ? html`<div class="gm__watching" role="status">
         <${GIcon} name="eye" /><span>正在查看 <b>${watchedName}</b> 的阵地（只读）</span>
-        <${Button} size="sm" variant="primary" icon="back" onClick=${() => watchPlayer({ playerId: myId })}>返回自己<//>
+        ${!observing ? html`<${Button} size="sm" variant="primary" icon="back" onClick=${() => watchPlayer({ playerId: myId })}>返回自己<//>` : null}
       </div>` : null}
 
       ${showShop ? html`<${ShopBar} priv=${priv} editable=${editable} collapsed=${collapsed} onCollapse=${setCollapsed}
@@ -1229,7 +1248,7 @@ function MatchScreen() {
       <${Ticker} />
 
       <div class="gm__corner">
-        <${EmoteWheel} open=${emoteOpen} onToggle=${setEmoteOpen} onSend=${(id) => actions.emote(id)} disabled=${conn.status !== 'online'} />
+        <${EmoteWheel} open=${emoteOpen} onToggle=${setEmoteOpen} onSend=${(id) => actions.emote(id)} disabled=${conn.status !== 'online' || observing} />
         <button type="button" class="gm__gear" aria-label="设置" title="设置" onClick=${() => setSettingsOpen(true)}><${GIcon} name="gear" /></button>
         <button type="button" class="gm__gear gm__guide" aria-label="玩法说明" title="玩法说明" onClick=${() => openGuide(0)}><${Icon} name="book" /></button>
         <${FullscreenButton} class="gm__gear gm__fs" />
@@ -1268,7 +1287,7 @@ function MatchScreen() {
       onConfirm=${(uid) => closeReplace(uid)} onCancel=${() => closeReplace(null)} />` : null}
 
     <${SettingsModal} open=${settingsOpen} onClose=${() => setSettingsOpen(false)} />
-    <${ExitModal} open=${exitOpen} onClose=${() => setExitOpen(false)} solo=${solo} />
+    <${ExitModal} open=${exitOpen} onClose=${() => setExitOpen(false)} solo=${solo} observing=${observing} />
   </div>`;
 }
 

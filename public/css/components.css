@@ -941,3 +941,14 @@
   --bk-c: var(--red-premium);
 }
 .crash__box h2 { font-size: .3rem; }
+
+/* spectator-slot indicator: count chip + name popup, shared by top bar / step header / room (issue #76) */
+.obschip-anchor { position: relative; display: inline-flex; }
+.obschip { display: inline-flex; align-items: center; gap: .04rem; padding: 0 .09rem; height: .3rem;
+  font-size: .15rem; color: var(--text-lo); background: transparent; border: 1px solid var(--line-3); border-radius: .15rem; cursor: pointer; }
+.obschip .icon { width: .16rem; height: .16rem; color: var(--mint-400); }
+.obschip__pop { position: absolute; top: calc(100% + .06rem); left: 0; z-index: 40; display: flex; flex-direction: column; gap: .04rem;
+  padding: .1rem .12rem; min-width: 1.3rem; font-size: .14rem; color: var(--text-lo);
+  background: var(--panel, rgba(10, 14, 20, .94)); border: 1px solid var(--line-3); border-radius: .06rem; }
+.obschip__head { color: var(--mint-400); }
+.obschip__name { white-space: nowrap; }

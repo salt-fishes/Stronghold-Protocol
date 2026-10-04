@@ -67,8 +67,8 @@ function clientPool(getUrl) {
   };
 }
 
-async function createRoom(c, mode = 'coop', difficulty = 'NORMAL') {
-  const r = await c.request({ t: 'room.create', mode, difficulty });
+async function createRoom(c, mode = 'coop', difficulty = 'NORMAL', extra = {}) {
+  const r = await c.request({ t: 'room.create', mode, difficulty, ...extra });
   assert.equal(r.t, 'ok', JSON.stringify(r));
   return c.waitFor('room.state', (s) => s.hostId === c.id && s.mode === mode);
 }
@@ -586,7 +586,8 @@ describe('websocket lobby', () => {
 
   test('room full, solo rooms admit one human and no AI', async () => {
     const host = await pool.player('H');
-    const st = await createRoom(host);
+    // spectate: false — an observer join would otherwise succeed here (test/lobby-spectate.test.js covers that path)
+    const st = await createRoom(host, 'coop', 'NORMAL', { spectate: false });
     const guests = [];
     for (let i = 0; i < 2; i++) {
       const g = await pool.player(`G${i}`);
@@ -669,7 +670,8 @@ describe('websocket lobby', () => {
 
   test('start flow: readiness gate → stub INFO_CHECK → end → back to LOBBY → play again', async () => {
     const host = await pool.player('Host');
-    const st = await createRoom(host, 'coop', 'HARD');
+    // spectate: false keeps the outsider-join refusals below meaningful (observers are covered separately)
+    const st = await createRoom(host, 'coop', 'HARD', { spectate: false });
     const guest = await pool.player('Guest');
     await joinRoom(guest, st.code);
     await expectOk(host, { t: 'room.addBot' });
@@ -820,7 +822,8 @@ describe('websocket lobby', () => {
 
   test('g.leave / room.leave during a match departs permanently; seat freed when the match ends', async () => {
     const host = await pool.player('Host');
-    const st = await createRoom(host);
+    // spectate: false — the departed guest's rejoin below must stay refused (they create a room right after)
+    const st = await createRoom(host, 'coop', 'NORMAL', { spectate: false });
     const guest = await pool.player('Guest');
     await joinRoom(guest, st.code);
     await expectOk(guest, { t: 'room.ready', ready: true });
@@ -912,7 +915,10 @@ describe('websocket lobby', () => {
       }
     }
     for (const sess of srv.registry.all()) {
-      if (sess.roomCode) assert.ok(srv.lobby.rooms.get(sess.roomCode)?.seatOf(sess.playerId), 'session points at its seat');
+      if (!sess.roomCode) continue;
+      const sessRoom = srv.lobby.rooms.get(sess.roomCode);
+      // a member points at its seat, an observer at its spectator slot
+      assert.ok(sessRoom && (sessRoom.seatOf(sess.playerId) || sessRoom.observers.has(sess.playerId)), 'session points at its seat');
     }
     const h = JSON.parse((await httpReq(srv.port, '/healthz')).body.toString());
     assert.equal(h.ok, true);
