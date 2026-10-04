@@ -135,6 +135,28 @@ describe('spectator seats (community report #26, real server)', { skip: !ENABLED
       await sleep(1500);
       await spec.shot('battle');
 
+      // the in-match 观战席 capsule (ui/hud.js SpectatorPill): the game screen used to hide the seats, so the host
+      // could not free one while a match ran — the room screen (with its ✕) is not reachable from here
+      await host.page.waitForSelector('.gtop__meta .specpill', { timeout: 10000 });
+      assert.equal(await host.page.$eval('.specpill .specpill__num', (el) => el.textContent.trim()), '1');
+      // …and the spectator sees it too (their own row marked 你)
+      await spec.page.waitForSelector('.gtop .specpill', { timeout: 10000 });
+      await host.click('.specpill', '观战席');
+      await host.page.waitForSelector('.spec__roster .spec__row', { timeout: 8000 });
+      const roster = await host.page.evaluate(() => ({
+        rows: [...document.querySelectorAll('.spec__roster .spec__row')].map((r) => r.textContent.trim()),
+        kick: [...document.querySelectorAll('.spec__roster .spec__row button')].length,
+      }));
+      assert.equal(roster.rows.length, 1);
+      assert.equal(roster.kick, 1, 'the host has a ✕ in the roster while the match runs');
+      await host.click('.spec__roster .spec__row button', '移出该观战者');
+      await host.page.waitForFunction(() => !document.querySelector('.gtop__meta .specpill'), { timeout: 8000 });
+      await host.page.waitForFunction(() => (globalThis.__SP__.store.get().room?.spectators || []).length === 0, { timeout: 8000 });
+      const removed = await spec.requests();
+      assert.ok(removed.every((r) => ALLOWED.has(r[0])), 'the removed spectator sent no player action');
+      await sleep(600);
+      await spec.shot('kicked-in-match');
+
       // a reload: the seat comes back with the match
       await spec.page.reload({ waitUntil: 'domcontentloaded' });
       await spec.page.waitForFunction(() => !!globalThis.__SP__ && !!globalThis.__SP__.store.get().match.public, { timeout: 30000 });
