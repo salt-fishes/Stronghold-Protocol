@@ -61,8 +61,9 @@ export function roomFacts(room, myId) {
     emptySeats: seats.filter((s) => !s).length,
     canStart: isHost && othersReady && !!mine,
     othersReady,
-    // spectator seats (never players: not in `humans`, never counted for ready / start)
+    // spectator seats (never players: not in `humans`, never counted for ready / start) and the host's own cap
     spectators: Array.isArray(room?.spectators) ? room.spectators.filter((s) => s && typeof s === 'object') : [],
+    spectatorCap: Number.isInteger(room?.spectatorCap) && room.spectatorCap >= 0 ? room.spectatorCap : MAX_SPECTATORS,
     spectating: isSpectating(room, myId),
   };
 }
@@ -139,11 +140,13 @@ function SeatCard({ seat, index, room, facts, myId, busy, onAddBot, onRemoveBot,
   </article>`;
 }
 
-/** 观战席: the room's spectators (host: ✕ frees a seat), and 入座 for a spectator while a player seat is free. */
+/** 观战席: the room's spectators (host: ✕ frees a seat), and 入座 for a spectator while a player seat is free.
+ *  The host's own cap (`facts.spectatorCap`, room.create {spectators}) labels the counter; a cap of 0 hides the strip. */
 function SpectatorBar({ facts, myId, busy, onRemove, onSit }) {
-  if (!facts.spectators.length) return null;
+  if (!facts.spectators.length && facts.spectatorCap <= 0) return null;
   return html`<section class="specbar" aria-label="观战席">
-    <span class="specbar__label"><${Icon} name="eye" />观战席<b class="num">${facts.spectators.length}</b><span class="num t-dim">/${MAX_SPECTATORS}</span></span>
+    <span class="specbar__label"><${Icon} name="eye" />观战席<b class="num">${facts.spectators.length}</b><span class="num t-dim">/${facts.spectatorCap}</span></span>
+    ${facts.spectatorCap <= 0 ? html`<span class="specbar__off t-dim">本局不接受观战</span>` : null}
     ${facts.spectators.map((s) => html`<span key=${s.playerId} class=${`specbar__who${s.playerId === myId ? ' is-me' : ''}${s.connected === false ? ' is-offline' : ''}`}>
       ${s.connected === false ? html`<${Icon} name="wifiOff" />` : null}${s.name || '博士'}${s.playerId === myId ? html`<span class="seat__you">你</span>` : null}
       ${facts.isHost ? html`<${Button} variant="ghost" size="sm" square=${true} icon="close" loading=${busy === `rs${s.playerId}`}
