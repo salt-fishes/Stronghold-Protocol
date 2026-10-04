@@ -19,7 +19,7 @@ import { sanitizeName, TokenBucket, SessionRegistry, clientAddress, normalizeIp,
 import { StubMatch as Match } from '../server/match/StubMatch.js';
 import { Match as RealMatch } from '../server/match/Match.js';
 import { TestClient } from './helpers/wsClient.js';
-import { ERR, MAX_SEATS, MAX_SPECTATORS, PHASE, EMOTES } from '../shared/constants.js';
+import { ERR, MAX_SEATS, MAX_SPECTATORS, MAX_SPECTATOR_SEATS, PHASE, EMOTES } from '../shared/constants.js';
 
 const CODE_RE = new RegExp(`^[${CODE_ALPHABET}]{4}$`);
 const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
@@ -686,6 +686,67 @@ describe('websocket lobby', () => {
     await expectError(s4, { t: 'room.spectate', code: loneSt.code }, ERR.ROOM_NOT_FOUND);
   });
 
+  // the host's own spectator cap (room.create {spectators}, community report #26 follow-up)
+  test('room.create {spectators}: the host picks the room cap (1…MAX_SPECTATOR_SEATS), 0 turns spectating off', async () => {
+    // 1) a co-op room with cap 1: one spectator fits, the second is refused
+    const host = await pool.player('CapHost');
+    const r1 = await host.request({ t: 'room.create', mode: 'coop', difficulty: 'NORMAL', spectators: 1 });
+    assert.equal(r1.t, 'ok', JSON.stringify(r1));
+    const st1 = await host.waitFor('room.state', (s) => s.spectatorCap === 1);
+    assert.equal(st1.spectators.length, 0);
+    const w1 = await pool.player('CapW1');
+    await expectOk(w1, { t: 'room.spectate', code: st1.code });
+    await host.waitFor('room.state', (s) => s.spectators.length === 1);
+    const w2 = await pool.player('CapW2');
+    await expectError(w2, { t: 'room.spectate', code: st1.code }, ERR.ROOM_FULL);
+    // 2) cap 0 = the room takes no spectator at all
+    const hostOff = await pool.player('CapHostOff');
+    const r2 = await hostOff.request({ t: 'room.create', mode: 'coop', difficulty: 'NORMAL', spectators: 0 });
+    assert.equal(r2.t, 'ok', JSON.stringify(r2));
+    const stOff = await hostOff.waitFor('room.state', (s) => s.spectatorCap === 0);
+    const noSeat = await pool.player('CapNoSeat');
+    await expectError(noSeat, { t: 'room.spectate', code: stOff.code }, ERR.ROOM_FULL);
+    // 3) out of range is a protocol error, not a silent clamp
+    await expectError(hostOff, { t: 'room.create', mode: 'coop', difficulty: 'NORMAL', spectators: MAX_SPECTATOR_SEATS + 1 }, ERR.BAD_MSG);
+    await expectError(hostOff, { t: 'room.create', mode: 'coop', difficulty: 'NORMAL', spectators: -1 }, ERR.BAD_MSG);
+    // 4) the ceiling the protocol accepts
+    const hostMax = await pool.player('CapHostMax');
+    const r3 = await hostMax.request({ t: 'room.create', mode: 'coop', difficulty: 'NORMAL', spectators: MAX_SPECTATOR_SEATS });
+    assert.equal(r3.t, 'ok', JSON.stringify(r3));
+    const stMax = await hostMax.waitFor('room.state', (s) => s.spectatorCap === MAX_SPECTATOR_SEATS);
+    for (let i = 0; i < MAX_SPECTATOR_SEATS; i++) {
+      const w = await pool.player(`CapMany${i}`);
+      await expectOk(w, { t: 'room.spectate', code: stMax.code });
+    }
+    await hostMax.waitFor('room.state', (s) => s.spectators.length === MAX_SPECTATOR_SEATS);
+    const overflow = await pool.player('CapOverflow');
+    await expectError(overflow, { t: 'room.spectate', code: stMax.code }, ERR.ROOM_FULL);
+    // 5) solo rooms never seat spectators
+    const soloHost = await pool.player('CapSolo');
+    const soloSt = await createRoom(soloHost, 'solo', 'FUNNY');
+    assert.equal(soloSt.spectatorCap, 0);
+    const soloWatch = await pool.player('CapSoloWatch');
+    await expectError(soloWatch, { t: 'room.spectate', code: soloSt.code }, ERR.ROOM_FULL);
+  });
+
+  // a full roster with a free spectator seat: room.join answers ROOM_FULL, which is what makes the client
+  // offer "enter as a spectator?" (the room must be the newest one: creating another room frees the old one)
+  test('a full co-op room answers ROOM_FULL to room.join while room.spectate still seats the late arrival', async () => {
+    const host = await pool.player('FullHost');
+    await expectOk(host, { t: 'room.create', mode: 'coop', difficulty: 'NORMAL', spectators: MAX_SPECTATORS });
+    const st = await host.waitFor('room.state', (s) => s.spectatorCap === MAX_SPECTATORS);
+    for (const name of ['Full2', 'Full3', 'Full4']) {
+      const p = await pool.player(name);
+      await joinRoom(p, st.code);
+    }
+    await host.waitFor('room.state', (s) => s.seats.every(Boolean));
+    assert.equal(st.spectators.length, 0, 'four humans, no spectator yet');
+    const late = await pool.player('FullLate');
+    await expectError(late, { t: 'room.join', code: st.code }, ERR.ROOM_FULL);
+    await expectOk(late, { t: 'room.spectate', code: st.code });
+    await host.waitFor('room.state', (s) => s.spectators.some((x) => x.playerId === late.id));
+  });
+
   test('spectators during a match: broadcasts but no private view, join mid-match, only watching, reconnect gets the seat back', async () => {
     const host = await pool.player('Host');
     const st = await createRoom(host);
@@ -1031,9 +1092,15 @@ describe('websocket lobby', () => {
         assert.ok(sess, 'seated session exists');
         assert.equal(sess.roomCode, room.code);
       }
-      // spectator seats: capped, none in solo rooms, never also a player (here or elsewhere), never the host
-      assert.ok(room.spectators.length <= MAX_SPECTATORS, `room ${room.code} spectator cap`);
-      if (room.mode === 'solo') assert.equal(room.spectators.length, 0, 'no spectator seat in a solo room');
+      // spectator seats: capped by the room's own cap (room.create {spectators}, default MAX_SPECTATORS, never above
+      // MAX_SPECTATOR_SEATS), none in solo rooms, never also a player (here or elsewhere), never the host
+      assert.ok(Number.isInteger(room.spectatorCap) && room.spectatorCap >= 0 && room.spectatorCap <= MAX_SPECTATOR_SEATS,
+        `room ${room.code} spectatorCap in range (got ${room.spectatorCap})`);
+      assert.ok(room.spectators.length <= room.spectatorCap, `room ${room.code} spectator cap ${room.spectatorCap}`);
+      if (room.mode === 'solo') {
+        assert.equal(room.spectatorCap, 0, 'a solo room offers no spectator seat');
+        assert.equal(room.spectators.length, 0, 'no spectator seat in a solo room');
+      }
       for (const sp of room.spectators) {
         assert.ok(!seen.has(sp.playerId), 'a spectator is seated (or spectating) twice');
         seen.add(sp.playerId);

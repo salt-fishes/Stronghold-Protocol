@@ -223,6 +223,8 @@
 .specbar__label { display: flex; align-items: baseline; gap: .06rem; font-weight: 700; color: var(--text-md); }
 .specbar__label .icon { width: .18rem; height: .18rem; align-self: center; color: var(--mint-500); }
 .specbar__label b { color: var(--mint-400); }
+/* the host turned spectating off for this room (room.state {spectatorCap: 0}) */
+.specbar__off { font-size: .15rem; }
 .specbar__who {
   display: inline-flex;
   align-items: center;
