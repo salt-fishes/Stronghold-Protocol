@@ -67,14 +67,20 @@ export function errorText(code, msg) {
 
 /** Error thrown/rejected by requests. `code` is an ERR code or a CLIENT_ERR_TEXT key. */
 export class NetError extends Error {
-  /** @param {string} code @param {string} [msg] server text @param {string} [detail] server developer detail */
-  constructor(code, msg, detail) {
+  /**
+   * @param {string} code
+   * @param {string} [msg] server text
+   * @param {string} [detail] server developer detail
+   * @param {object} [data] structured server context (`error.data`, DESIGN §8.1) — machine-readable, never display text
+   */
+  constructor(code, msg, detail, data) {
     const versionMismatch = typeof detail === 'string' && /version/i.test(detail);
     super(versionMismatch ? CLIENT_ERR_TEXT.VERSION : errorText(code, msg));
     this.name = 'NetError';
     this.code = String(code || 'INTERNAL');
     this.serverMsg = msg ?? null;
     this.detail = typeof detail === 'string' ? detail : null;
+    this.data = data && typeof data === 'object' && !Array.isArray(data) ? data : null;
   }
 }
 
@@ -400,7 +406,7 @@ export class Net {
   _onHelloError(msg) {
     this._clearTimer('_helloTimer', 'clearTimeout');
     this._helloRid = null;
-    this.lastError = new NetError(msg.code, msg.msg, msg.detail);
+    this.lastError = new NetError(msg.code, msg.msg, msg.detail, msg.data);
     this._setStatus('connected');
     // Queued requests can't be sent without a session.
     this._failPending('OFFLINE', true);
@@ -548,13 +554,13 @@ export class Net {
       this._clearEntryTimer(entry);
       handled = true;
       try {
-        if (t === 'error') entry.reject(new NetError(msg.code, msg.msg, msg.detail));
+        if (t === 'error') entry.reject(new NetError(msg.code, msg.msg, msg.detail, msg.data));
         else entry.resolve(msg);
       } catch (err) { console.error('[net] request callback failed', err); }
     }
     const late = rid != null && !handled && this._expired.delete(rid); // reply to a request that already timed out
     if (t === 'error' && !handled && !isHelloError && !late) {
-      this._emit('unhandledError', new NetError(msg.code, msg.msg, msg.detail));
+      this._emit('unhandledError', new NetError(msg.code, msg.msg, msg.detail, msg.data));
     }
 
     this._emit(t, msg);

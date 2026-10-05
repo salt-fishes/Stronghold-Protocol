@@ -29,7 +29,7 @@
 //
 // The handler object (implemented by server/lobby.js) receives:
 //   onHello(session, { resumed, repeat })  after `welcome` was sent
-//   onMessage(session, msg) → { ok: true } | { error: ERR code, detail?: string } | undefined
+//   onMessage(session, msg) → { ok: true } | { error: ERR code, detail?: string, data?: object } | undefined
 //   routeGame(session, msg) → same (optional): client-side combat reports `b.progress` / `b.result` (DESIGN §14) go
 //                                          straight to the running match through it; without it they reach onMessage
 //   onDisconnect(session)                  the session's socket closed (session kept for the reconnect window)
@@ -617,7 +617,10 @@ export class Network {
       // back to the lobby — is stale, not a client mistake: never answered (DESIGN §14; a rid-less error frame would
       // surface as an error toast in the browser)
       if (msg.t === 'b.progress' && !validRid(rid)) return;
-      this.reply(conn, errorMsg(isErrCode(res.error) ? res.error : ERR.INTERNAL, rid, res.detail));
+      const m = errorMsg(isErrCode(res.error) ? res.error : ERR.INTERNAL, rid, res.detail);
+      // optional structured context for the client (`error.data`, DESIGN §8.1); `detail` stays developer-facing
+      if (res.data) m.data = res.data;
+      this.reply(conn, m);
     } else if (validRid(rid)) this.reply(conn, { t: 'ok', rid });
   }
 

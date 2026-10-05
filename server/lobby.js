@@ -104,7 +104,8 @@ export const SOLO_RECONNECT_FALLBACK_SEC = 86_400;
 export const BOT_NAMES = Object.freeze(['AI·华法琳', 'AI·阿米娅', 'AI·惊蛰', 'AI·杜宾', 'AI·凯尔希', 'AI·可露希尔']);
 
 const OK = Object.freeze({ ok: true });
-const fail = (code, detail) => (detail ? { error: code, detail } : { error: code });
+/** `detail` is a developer string (never shown as-is); `data` is optional machine-readable context for the client. */
+const fail = (code, detail, data) => ({ error: code, ...(detail ? { detail } : {}), ...(data ? { data } : {}) });
 const noopLog = { info() {}, warn() {}, error() {}, debug() {} };
 
 /**
@@ -288,7 +289,7 @@ export class Lobby {
    * Validated client message from an identified session.
    * @param {import('./net.js').Session} session
    * @param {any} msg
-   * @returns {{ ok: true } | { error: string, detail?: string }}
+   * @returns {{ ok: true } | { error: string, detail?: string, data?: object }}
    */
   onMessage(session, msg) {
     switch (msg.t) {
@@ -395,7 +396,9 @@ export class Lobby {
     if (room.match) return fail(ERR.ROOM_STARTED);
     if (room.mode === 'solo') return fail(ERR.ROOM_FULL, 'solo room');
     const idx = room.freeSeat();
-    if (idx < 0) return fail(ERR.ROOM_FULL);
+    // The roster is full: `data.spectate` says whether a spectator seat is actually free — the client only offers the
+    // "enter as a spectator?" prompt then (a solo / spectating-off / spectator-full room answers ROOM_FULL too).
+    if (idx < 0) return fail(ERR.ROOM_FULL, undefined, { spectate: room.spectatorCap > room.spectators.length });
     if (cur) this.removeMember(cur, session.playerId);
     room.seats[idx] = this.humanSeat(idx, session);
     session.roomCode = room.code;
@@ -417,8 +420,8 @@ export class Lobby {
    * room.spectate: one of a co-op room's `spectatorCap` spectator seats (the host's room.create {spectators}, default
    * MAX_SPECTATORS, 0 = off), in its lobby or during its match (header). In a running match the match registers the
    * spectator and resends what it may see (Match.addSpectator). A room with no free seat — including one whose host
-   * turned spectating off — answers ROOM_FULL, which the client offers as "enter as a spectator?" only when a seat is
-   * actually free (it reads `room.state {spectatorCap, spectators}`).
+   * turned spectating off — answers ROOM_FULL; the lobby offers "enter as a spectator?" from a refused `room.join`
+   * only when that refusal carried `data.spectate` (join sets it from this cap and the seats taken right now).
    */
   spectate(session, { code }) {
     const norm = String(code).trim().toUpperCase();

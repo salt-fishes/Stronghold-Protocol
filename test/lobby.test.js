@@ -699,6 +699,11 @@ describe('websocket lobby', () => {
     await host.waitFor('room.state', (s) => s.spectators.length === 1);
     const w2 = await pool.player('CapW2');
     await expectError(w2, { t: 'room.spectate', code: st1.code }, ERR.ROOM_FULL);
+    // a late player on the full roster: ROOM_FULL without a seat to offer (the one spectator seat is taken) — the
+    // lobby must not open the "enter as a spectator?" prompt (review feedback on #120: data.spectate gates it)
+    for (const n of ['Cap1b', 'Cap1c', 'Cap1d']) await joinRoom(await pool.player(n), st1.code);
+    const fullLate = await expectError(await pool.player('Cap1Full'), { t: 'room.join', code: st1.code }, ERR.ROOM_FULL);
+    assert.equal(fullLate.data?.spectate, false, 'spectator seats full: no prompt');
     // 2) cap 0 = the room takes no spectator at all
     const hostOff = await pool.player('CapHostOff');
     const r2 = await hostOff.request({ t: 'room.create', mode: 'coop', difficulty: 'NORMAL', spectators: 0 });
@@ -706,6 +711,10 @@ describe('websocket lobby', () => {
     const stOff = await hostOff.waitFor('room.state', (s) => s.spectatorCap === 0);
     const noSeat = await pool.player('CapNoSeat');
     await expectError(noSeat, { t: 'room.spectate', code: stOff.code }, ERR.ROOM_FULL);
+    // a late player on the full cap-0 roster: no prompt either (the host turned spectating off)
+    for (const n of ['CapOff2', 'CapOff3', 'CapOff4']) await joinRoom(await pool.player(n), stOff.code);
+    const offLate = await expectError(await pool.player('CapOffLate'), { t: 'room.join', code: stOff.code }, ERR.ROOM_FULL);
+    assert.equal(offLate.data?.spectate, false, 'spectating off: no prompt');
     // 3) out of range is a protocol error, not a silent clamp
     await expectError(hostOff, { t: 'room.create', mode: 'coop', difficulty: 'NORMAL', spectators: MAX_SPECTATOR_SEATS + 1 }, ERR.BAD_MSG);
     await expectError(hostOff, { t: 'room.create', mode: 'coop', difficulty: 'NORMAL', spectators: -1 }, ERR.BAD_MSG);
@@ -727,6 +736,9 @@ describe('websocket lobby', () => {
     assert.equal(soloSt.spectatorCap, 0);
     const soloWatch = await pool.player('CapSoloWatch');
     await expectError(soloWatch, { t: 'room.spectate', code: soloSt.code }, ERR.ROOM_FULL);
+    // joining a solo room refuses with ROOM_FULL and carries no offer (a spectator seat cannot exist)
+    const soloJoin = await expectError(soloWatch, { t: 'room.join', code: soloSt.code }, ERR.ROOM_FULL);
+    assert.notEqual(soloJoin.data?.spectate, true, 'solo room: no prompt');
   });
 
   // a full roster with a free spectator seat: room.join answers ROOM_FULL, which is what makes the client
@@ -742,7 +754,8 @@ describe('websocket lobby', () => {
     await host.waitFor('room.state', (s) => s.seats.every(Boolean));
     assert.equal(st.spectators.length, 0, 'four humans, no spectator yet');
     const late = await pool.player('FullLate');
-    await expectError(late, { t: 'room.join', code: st.code }, ERR.ROOM_FULL);
+    const refused = await expectError(late, { t: 'room.join', code: st.code }, ERR.ROOM_FULL);
+    assert.equal(refused.data?.spectate, true, 'a free spectator seat: the client may offer it');
     await expectOk(late, { t: 'room.spectate', code: st.code });
     await host.waitFor('room.state', (s) => s.spectators.some((x) => x.playerId === late.id));
   });

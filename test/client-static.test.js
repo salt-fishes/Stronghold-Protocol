@@ -417,6 +417,10 @@ describe('net.js', () => {
     assert.equal(e.code, 'NO_FUNDS');
     assert.equal(e.message, '资金不足');
     assert.match(new NetError('BAD_MSG', 'x', 'version mismatch: server 2').message, /版本/);
+    // error.data (DESIGN §8.1): structured server context kept as an object, anything else dropped
+    assert.deepEqual(new NetError('ROOM_FULL', 'x', undefined, { spectate: true }).data, { spectate: true });
+    assert.equal(new NetError('ROOM_FULL', 'x', undefined, 'nope').data, null);
+    assert.equal(new NetError('ROOM_FULL', 'x', undefined, ['nope']).data, null);
   });
 
   test('defaultWsUrl', async () => {
@@ -466,6 +470,11 @@ describe('net.js', () => {
     const m2 = ws().last('room.join');
     ws().recv({ t: 'error', rid: m2.rid, code: 'ROOM_NOT_FOUND', msg: '…' });
     await assert.rejects(p2, (e) => e.code === 'ROOM_NOT_FOUND' && e.message === '未找到该同盟密钥对应的房间');
+
+    const p3 = net.request('room.join', { code: 'WXYZ' });
+    const m3 = ws().last('room.join');
+    ws().recv({ t: 'error', rid: m3.rid, code: 'ROOM_FULL', msg: '…', data: { spectate: true } });
+    await assert.rejects(p3, (e) => e.code === 'ROOM_FULL' && e.data?.spectate === true && e.message === '房间已满');
     assert.equal(net.pendingCount, 0);
   });
 
@@ -1012,6 +1021,24 @@ describe('screen helpers', () => {
     assert.equal(codeArg(element, 'AB'), null);
     assert.equal(codeArg(undefined, undefined), null);
     assert.equal(codeArg('ZZZ QQQ', ''), 'ZZZQ', 'a real string is still truncated to ROOM_CODE_LEN');
+  });
+
+  // Review feedback on #120: any ROOM_FULL from room.join opened the "enter as a spectator?" modal, so a solo room,
+  // a room whose host turned spectating off and one whose spectator seats are full all offered a seat room.spectate
+  // refuses. The server now says whether one is free (`error.data.spectate`) and spectateOffer() is the only gate.
+  test('lobby: only a refusal that says a spectator seat is free offers one (spectateOffer)', async () => {
+    const { spectateOffer } = await mod('screens/lobby.js');
+    const err = (code, data) => ({ code, data });
+    assert.equal(spectateOffer(err('ROOM_FULL', { spectate: true })), true, 'a free spectator seat');
+    assert.equal(spectateOffer(err('ROOM_FULL', { spectate: false })), false, 'spectating off / spectator seats full');
+    assert.equal(spectateOffer(err('ROOM_FULL', {})), false, 'solo / a refusal from an older server');
+    assert.equal(spectateOffer(err('ROOM_FULL', undefined)), false);
+    assert.equal(spectateOffer(err('ROOM_FULL', 'spectate')), false, 'non-object data');
+    assert.equal(spectateOffer(err('ROOM_FULL', { spectate: 1 })), false, 'only a real boolean');
+    assert.equal(spectateOffer(err('ROOM_STARTED', { spectate: true })), false, 'a running room is not offered');
+    assert.equal(spectateOffer(err('ROOM_NOT_FOUND', undefined)), false);
+    assert.equal(spectateOffer(null), false);
+    assert.equal(spectateOffer(undefined), false);
   });
 
   test('lobby: battlefield note per difficulty (标准 fixed 战场#01, 险境 8 / 绝境·终极 7 random) matches config.json modes[].stages', async () => {

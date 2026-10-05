@@ -130,6 +130,17 @@ export function codeArg(arg, field) {
 }
 
 /**
+ * Whether a refused `room.join` should offer the room's spectator seats: only when the server said one is actually
+ * free (`error.data.spectate`, set by server/lobby.js join). A bare ROOM_FULL also covers a solo room, a room whose
+ * host turned spectating off and one whose spectator seats are full — the prompt must not appear for those.
+ * @param {any} err the error net.request rejected with (NetError)
+ * @returns {boolean}
+ */
+export function spectateOffer(err) {
+  return err?.code === ERR.ROOM_FULL && err?.data?.spectate === true;
+}
+
+/**
  * Room code from a deep link query string (`?room=CODE`), or null when absent/malformed.
  * Accepts ROOM_CODE_LEN..ROOM_CODE_LEN+2 alphanumerics (the protocol's join limit).
  * @param {string} search e.g. location.search
@@ -281,9 +292,9 @@ export function LobbyScreen() {
     const k = codeArg(c, code);
     if (!k) { toast(`同盟密钥为 ${ROOM_CODE_LEN} 位字母或数字`, 'warn'); return; }
     run('join', () => net.request('room.join', { code: k }).catch((err) => {
-      // The room is full: ask before taking one of its spectator seats (only when the host left one free — the server
-      // answers ROOM_FULL for both "no player seat" and "no spectator seat"). The prompt remembers the code it asked for.
-      if (err?.code === ERR.ROOM_FULL) { setFullAsk({ code: k }); return; }
+      // The room is full: ask before taking one of its spectator seats, but only when the server confirmed one is free
+      // (`error.data.spectate`) — ROOM_FULL alone also covers solo / spectating-off / spectator-full refusals.
+      if (spectateOffer(err)) { setFullAsk({ code: k }); return; }
       throw err;
     }));
   };
