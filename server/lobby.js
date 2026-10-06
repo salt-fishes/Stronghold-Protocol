@@ -78,7 +78,7 @@
 //     a player seat (the seat is kept and given back on resume).
 
 import { randomBytes, randomInt } from 'node:crypto';
-import { ERR, MAX_SEATS, MAX_SPECTATORS, isSpectatorCap, ROOM_CODE_LEN, modeIdFor } from '../shared/constants.js';
+import { ERR, MAX_SEATS, MAX_SPECTATORS, ROOM_CODE_LEN, modeIdFor } from '../shared/constants.js';
 import { checkLoadout } from '../shared/protocol.js';
 import { encode, isDroppable, isErrCode, sendRaw, sendSession } from './net.js';
 import { getData as defaultGetData, lookup } from './data.js';
@@ -104,8 +104,7 @@ export const SOLO_RECONNECT_FALLBACK_SEC = 86_400;
 export const BOT_NAMES = Object.freeze(['AI·华法琳', 'AI·阿米娅', 'AI·惊蛰', 'AI·杜宾', 'AI·凯尔希', 'AI·可露希尔']);
 
 const OK = Object.freeze({ ok: true });
-/** `detail` is a developer string (never shown as-is); `data` is optional machine-readable context for the client. */
-const fail = (code, detail, data) => ({ error: code, ...(detail ? { detail } : {}), ...(data ? { data } : {}) });
+const fail = (code, detail) => (detail ? { error: code, detail } : { error: code });
 const noopLog = { info() {}, warn() {}, error() {}, debug() {} };
 
 /**
@@ -122,14 +121,8 @@ function freezeLoadout(loadout) {
 
 /** One room: 4 seat slots, host, difficulty, optional running match. */
 export class Room {
-  /**
-   * @param {string} code
-   * @param {'solo'|'coop'} mode
-   * @param {string} difficulty
-   * @param {number} now
-   * @param {number} [spectatorCap] the host's cap (0…MAX_SPECTATOR_SEATS); defaults to MAX_SPECTATORS
-   */
-  constructor(code, mode, difficulty, now, spectatorCap = MAX_SPECTATORS) {
+  /** @param {string} code @param {'solo'|'coop'} mode @param {string} difficulty @param {number} now */
+  constructor(code, mode, difficulty, now) {
     this.code = code;
     this.mode = mode;
     this.difficulty = difficulty;
@@ -137,12 +130,7 @@ export class Room {
     this.hostId = null;
     /** @type {(Seat | null)[]} */
     this.seats = new Array(MAX_SEATS).fill(null);
-    /**
-     * The room's own spectator cap (room.create {spectators}): how many spectator seats this room offers.
-     * 0 = spectating is off for this room (every room.spectate is refused with ROOM_FULL).
-     */
-    this.spectatorCap = spectatorCap;
-    /** @type {{ playerId: string, name: string, connected: boolean }[]} spectator seats, ≤ this.spectatorCap (header) */
+    /** @type {{ playerId: string, name: string, connected: boolean }[]} spectator seats, ≤ MAX_SPECTATORS (header) */
     this.spectators = [];
     /** @type {any} running Match instance */
     this.match = null;
@@ -188,8 +176,6 @@ export class Room {
       mode: this.mode,
       difficulty: this.difficulty,
       inMatch: !!this.match,
-      // the host's spectator cap, so the client can label the 观战席 strip "n/cap" (0 = spectating off)
-      spectatorCap: this.spectatorCap,
       seats: this.seats.map((s) => (s
         ? { seat: s.seat, playerId: s.playerId, name: s.name, isBot: s.isBot, ready: s.ready, connected: s.connected && !s.left }
         : null)),
@@ -289,7 +275,7 @@ export class Lobby {
    * Validated client message from an identified session.
    * @param {import('./net.js').Session} session
    * @param {any} msg
-   * @returns {{ ok: true } | { error: string, detail?: string, data?: object }}
+   * @returns {{ ok: true } | { error: string, detail?: string }}
    */
   onMessage(session, msg) {
     switch (msg.t) {
@@ -353,7 +339,7 @@ export class Lobby {
   // room.* handlers
   // ---------------------------------------------------------------------------------------------------
 
-  create(session, { mode, difficulty, spectators }) {
+  create(session, { mode, difficulty }) {
     const cur = this.roomOf(session);
     if (cur && cur.match) return fail(ERR.ROOM_STARTED, 'leave your running match first');
     if (this.rooms.size >= this.opts.maxRooms) return fail(ERR.INTERNAL, 'too many rooms');
@@ -369,10 +355,7 @@ export class Lobby {
     const code = this.genCode();
     if (!code) return fail(ERR.INTERNAL, 'no room code available');
     if (cur) this.removeMember(cur, session.playerId);
-    // The host's spectator cap (room.create {spectators}, optional): solo rooms never seat spectators, so only a co-op
-    // room keeps the choice — an absent / non-integer value falls back to the default MAX_SPECTATORS.
-    const cap = mode !== 'coop' ? 0 : (isSpectatorCap(spectators) ? spectators : MAX_SPECTATORS);
-    const room = new Room(code, mode, difficulty, this.now(), cap);
+    const room = new Room(code, mode, difficulty, this.now());
     room.ownerKey = key;
     room.seats[0] = this.humanSeat(0, session);
     room.hostId = session.playerId;
@@ -380,7 +363,7 @@ export class Lobby {
     session.roomCode = code;
     session.notice = null;
     session.pendingResult = null;
-    this.log.info(`[lobby] ${code} created (${mode}/${difficulty}, spectator cap ${cap}) by ${session.name}`);
+    this.log.info(`[lobby] ${code} created (${mode}/${difficulty}) by ${session.name}`);
     this.broadcastState(room);
     return OK;
   }
@@ -396,9 +379,7 @@ export class Lobby {
     if (room.match) return fail(ERR.ROOM_STARTED);
     if (room.mode === 'solo') return fail(ERR.ROOM_FULL, 'solo room');
     const idx = room.freeSeat();
-    // The roster is full: `data.spectate` says whether a spectator seat is actually free — the client only offers the
-    // "enter as a spectator?" prompt then (a solo / spectating-off / spectator-full room answers ROOM_FULL too).
-    if (idx < 0) return fail(ERR.ROOM_FULL, undefined, { spectate: room.spectatorCap > room.spectators.length });
+    if (idx < 0) return fail(ERR.ROOM_FULL);
     if (cur) this.removeMember(cur, session.playerId);
     room.seats[idx] = this.humanSeat(idx, session);
     session.roomCode = room.code;
@@ -417,11 +398,8 @@ export class Lobby {
   }
 
   /**
-   * room.spectate: one of a co-op room's `spectatorCap` spectator seats (the host's room.create {spectators}, default
-   * MAX_SPECTATORS, 0 = off), in its lobby or during its match (header). In a running match the match registers the
-   * spectator and resends what it may see (Match.addSpectator). A room with no free seat — including one whose host
-   * turned spectating off — answers ROOM_FULL; the lobby offers "enter as a spectator?" from a refused `room.join`
-   * only when that refusal carried `data.spectate` (join sets it from this cap and the seats taken right now).
+   * room.spectate: one of a co-op room's MAX_SPECTATORS spectator seats, in its lobby or during its match (header). In a
+   * running match the match registers the spectator and resends what it may see (Match.addSpectator).
    */
   spectate(session, { code }) {
     const norm = String(code).trim().toUpperCase();
@@ -435,8 +413,7 @@ export class Lobby {
     }
     if (cur && cur.match) return fail(ERR.ROOM_STARTED, 'leave your running match first');
     if (room.mode === 'solo') return fail(ERR.ROOM_FULL, 'solo room');
-    if (room.spectatorCap <= 0) return fail(ERR.ROOM_FULL, 'spectating off for this room');
-    if (room.spectators.length >= room.spectatorCap) return fail(ERR.ROOM_FULL, 'no free spectator seat');
+    if (room.spectators.length >= MAX_SPECTATORS) return fail(ERR.ROOM_FULL, 'no free spectator seat');
     if (cur) this.removeMember(cur, session.playerId);
     room.spectators.push({ playerId: session.playerId, name: session.name, connected: session.connected });
     session.roomCode = room.code;

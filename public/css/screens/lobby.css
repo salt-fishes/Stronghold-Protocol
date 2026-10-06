@@ -236,21 +236,5 @@
 
 /* ---- create ------------------------------------------------------------------------------------------ */
 .create-box { margin-top: .3rem; display: flex; flex-direction: column; gap: .12rem; }
-/* host's spectator seats (room.create {spectators}): the 允许观战 box + how many 观战席 */
-.create-box__spectate { display: flex; flex-wrap: wrap; align-items: center; gap: .12rem; padding: .12rem .16rem;
-  border: 1px solid var(--line-soft, rgba(255,255,255,.08)); border-radius: .12rem; background: rgba(255,255,255,.02); }
-.create-box__check { display: inline-flex; align-items: center; gap: .08rem; font-size: .2rem; color: var(--text-md); cursor: pointer; user-select: none; }
-.create-box__check .icon { width: .2rem; height: .2rem; color: var(--mint-500); }
-.create-box__check input { width: .18rem; height: .18rem; accent-color: var(--mint-500); cursor: pointer; }
-.create-box__cap { display: inline-flex; align-items: center; gap: .06rem; margin-left: auto; font-size: .16rem; }
-.create-box__cap-chip { min-width: .28rem; height: .28rem; padding: 0 .06rem; border: 1px solid var(--line-soft, rgba(255,255,255,.12));
-  border-radius: .07rem; background: transparent; color: var(--text-md); font-size: .15rem; cursor: pointer; }
-.create-box__cap-chip:hover:not(:disabled) { border-color: var(--mint-600); color: var(--text-hi); }
-.create-box__cap-chip.is-on { border-color: var(--mint-500); background: rgba(45,212,191,.18); color: #99f6e4; font-weight: 700; }
-.create-box__cap-chip:disabled { opacity: .35; cursor: not-allowed; }
-.create-box__cap-hint { flex-basis: 100%; font-size: .14rem; }
-/* the "alliance is full → enter as a spectator?" prompt */
-.full-ask { display: flex; flex-direction: column; gap: .1rem; font-size: .19rem; line-height: 1.5; color: var(--text-md); }
-.full-ask b { color: #fbbf24; letter-spacing: .12em; }
 .create-box .btn--xl { height: .92rem; font-size: .32rem; letter-spacing: .3em; }
 .create-box__hint { display: flex; align-items: center; justify-content: center; min-height: .3rem; font-size: .14rem; color: var(--text-lo); }

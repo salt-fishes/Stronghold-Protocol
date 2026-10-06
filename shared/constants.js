@@ -11,16 +11,8 @@ export const MAX_SEATS = 4;
  * room has 1–4 players and no spectator seat (there only eliminated players and 联防 bystanders watch, research 09 §3.1).
  * A spectator never counts as a player, may not act, and watches like an eliminated player (server/lobby.js spectate,
  * server/match/Match.js addSpectator).
- *
- * The host picks the room's own cap at `room.create {spectators}` — `MAX_SPECTATORS` is the default and
- * `MAX_SPECTATOR_SEATS` the ceiling the protocol accepts; 0 disables spectating for that room (the lobby then refuses
- * every `room.spectate` with ROOM_FULL and the room does not show the 观战席 strip).
  */
 export const MAX_SPECTATORS = 2;
-/** Ceiling of a room's own spectator cap (`room.create {spectators}`); the default is `MAX_SPECTATORS`. */
-export const MAX_SPECTATOR_SEATS = 8;
-/** The cap a host picks: an integer in 0…MAX_SPECTATOR_SEATS (0 = the room refuses every spectator). */
-export const isSpectatorCap = (v) => Number.isInteger(v) && v >= 0 && v <= MAX_SPECTATOR_SEATS;
 export const ROOM_CODE_LEN = 4;
 export const NAME_MAX_LEN = 12;
 

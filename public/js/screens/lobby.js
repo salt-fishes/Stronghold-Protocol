@@ -10,8 +10,8 @@
 // plays 战场#01, 险境 draws one of 8, 绝境 / 终极 one of 7 (m01 excluded).
 
 import { useEffect, useRef, useState } from '../../vendor/hooks.module.js';
-import { DIFFICULTIES, DIFFICULTY_NAMES, DIFFICULTY_COLORS, ROOM_CODE_LEN, MAX_SEATS, MAX_SPECTATORS, MAX_SPECTATOR_SEATS, ERR, modeIdFor } from '../../../shared/constants.js';
-import { html, Button, Icon, MicroLabel, Panel, TextField, PingPill, AvatarFrame, Tooltip, Spinner, Modal, DifficultyIcon, doctorNo } from '../ui/components.js';
+import { DIFFICULTIES, DIFFICULTY_NAMES, DIFFICULTY_COLORS, ROOM_CODE_LEN, MAX_SEATS, MAX_SPECTATORS, modeIdFor } from '../../../shared/constants.js';
+import { html, Button, Icon, MicroLabel, Panel, TextField, PingPill, AvatarFrame, Tooltip, Spinner, DifficultyIcon, doctorNo } from '../ui/components.js';
 import { toast, toastError } from '../ui/toasts.js';
 import { GuideButton } from '../ui/guide.js';
 import { LoadoutButton } from './loadout.js';
@@ -130,17 +130,6 @@ export function codeArg(arg, field) {
 }
 
 /**
- * Whether a refused `room.join` should offer the room's spectator seats: only when the server said one is actually
- * free (`error.data.spectate`, set by server/lobby.js join). A bare ROOM_FULL also covers a solo room, a room whose
- * host turned spectating off and one whose spectator seats are full — the prompt must not appear for those.
- * @param {any} err the error net.request rejected with (NetError)
- * @returns {boolean}
- */
-export function spectateOffer(err) {
-  return err?.code === ERR.ROOM_FULL && err?.data?.spectate === true;
-}
-
-/**
  * Room code from a deep link query string (`?room=CODE`), or null when absent/malformed.
  * Accepts ROOM_CODE_LEN..ROOM_CODE_LEN+2 alphanumerics (the protocol's join limit).
  * @param {string} search e.g. location.search
@@ -249,16 +238,7 @@ export function LobbyScreen() {
     return DIFFICULTIES.includes(d) ? d : 'FUNNY';
   });
   const [code, setCode] = useState('');
-  // host's spectator seats (room.create {spectators}): a co-op room may offer 0–MAX_SPECTATOR_SEATS of them; the same
-  // choice seeds the 观战 button hint. Persisted like the mode/difficulty preferences.
-  const [spectateOn, setSpectateOn] = useState(() => loadPref('lobby.spectateOn', true) !== false);
-  const [spectateCount, setSpectateCount] = useState(() => {
-    const n = Number(loadPref('lobby.spectateCount', MAX_SPECTATORS));
-    return Number.isInteger(n) && n >= 1 && n <= MAX_SPECTATOR_SEATS ? n : MAX_SPECTATORS;
-  });
   const [busy, setBusy] = useState(null);
-  /** Set when an 加入同盟 was refused with ROOM_FULL: `{ code }` opens the "enter as a spectator?" prompt. */
-  const [fullAsk, setFullAsk] = useState(null);
   const [recent] = useState(recentRooms);
   const alive = useRef(true);
   const inFlight = useRef(false); // synchronous guard against double clicks (state updates are async)
@@ -280,30 +260,19 @@ export function LobbyScreen() {
       if (alive.current) setBusy(null);
     }
   };
-  const create = () => run('create', () => net.request('room.create', {
-    mode: roomMode,
-    difficulty,
-    // only a co-op room carries the host's spectator cap (0 when the box is unticked)
-    ...(roomMode === 'coop' ? { spectators: spectateOn ? spectateCount : 0 } : {}),
-  }));
+  const create = () => run('create', () => net.request('room.create', { mode: roomMode, difficulty }));
   const join = (c = code) => {
     // `onClick=${join}` hands the click EVENT as the first argument, and a default parameter only applies to
     // `undefined` — codeArg keeps an event target out of the key and falls back to the input field
     const k = codeArg(c, code);
     if (!k) { toast(`同盟密钥为 ${ROOM_CODE_LEN} 位字母或数字`, 'warn'); return; }
-    run('join', () => net.request('room.join', { code: k }).catch((err) => {
-      // The room is full: ask before taking one of its spectator seats, but only when the server confirmed one is free
-      // (`error.data.spectate`) — ROOM_FULL alone also covers solo / spectating-off / spectator-full refusals.
-      if (spectateOffer(err)) { setFullAsk({ code: k }); return; }
-      throw err;
-    }));
+    run('join', () => net.request('room.join', { code: k }));
   };
   // a spectator seat: no player seat taken, nothing to do but watch (also a match already running)
   const spectate = (c = code) => {
     // same guard as join: `onClick=${spectate}` passes the click event, not a code
     const k = codeArg(c, code);
     if (!k) { toast(`同盟密钥为 ${ROOM_CODE_LEN} 位字母或数字`, 'warn'); return; }
-    setFullAsk(null);
     run('spectate', () => net.request('room.spectate', { code: k }).catch((err) => {
       // Clearer than the bare ERR_TEXT: the usual cause is a code that is not the host's (a remembered one from an
       // earlier room, or another machine's) — the server can only answer "no such room".
@@ -359,7 +328,7 @@ export function LobbyScreen() {
             <${TextField} size="code" icon="key" value=${code} placeholder="输入同盟密钥 / 粘贴邀请链接"
               transform=${normalizeCode} onInput=${(v) => setCode(normalizeCode(v))} onEnter=${() => join()} />
             <${Button} variant="amber" size="lg" icon="users" loading=${busy === 'join'} disabled=${!codeOk || !online} onClick=${() => join()}>加入同盟<//>
-            <${Tooltip} text=${`以观战者身份进入：不占博士席位，只能观看（每个同盟的观战席由房主设定，最多 ${MAX_SPECTATOR_SEATS} 名；模拟进行中也可进入）`}>
+            <${Tooltip} text=${`以观战者身份进入：不占博士席位，只能观看（每个同盟最多 ${MAX_SPECTATORS} 名，模拟进行中也可进入）`}>
               <${Button} variant="secondary" size="lg" icon="eye" class="join-spectate" loading=${busy === 'spectate'} disabled=${!codeOk || !online} onClick=${spectate}>观战<//>
             <//>
           </div>
@@ -379,23 +348,6 @@ export function LobbyScreen() {
           ${DIFFICULTIES.map((d) => html`<${DifficultyCard} key=${d} roomMode=${roomMode} difficulty=${d} selected=${difficulty === d} onSelect=${pickDifficulty} />`)}
         </div>
         <div class="create-box">
-          ${roomMode === 'coop' ? html`<div class="create-box__spectate" role="group" aria-label="观战席">
-            <label class="create-box__check">
-              <input type="checkbox" checked=${spectateOn}
-                onChange=${(e) => { const on = !!e.currentTarget.checked; setSpectateOn(on); savePref('lobby.spectateOn', on); }} />
-              <${Icon} name="eye" /><span>允许观战</span>
-            </label>
-            <div class="create-box__cap">
-              <span class="t-lo">观战席</span>
-              ${[1, 2, 3, 4, MAX_SPECTATOR_SEATS].map((n) => html`<button key=${n} type="button"
-                class=${`create-box__cap-chip num${spectateOn && spectateCount === n ? ' is-on' : ''}`}
-                disabled=${!spectateOn}
-                onClick=${() => { setSpectateCount(n); savePref('lobby.spectateCount', n); }}>${n}</button>`)}
-            </div>
-            <div class="create-box__cap-hint t-dim">
-              ${spectateOn ? `本局最多 ${spectateCount} 名观众，不占博士席位` : '本局不接受观战'}
-            </div>
-          </div>` : null}
           <${Tooltip} block=${true} text=${online ? null : '正在连接服务器…'}>
             <${Button} variant="primary" size="xl" block=${true} iconRight="chevrons" loading=${busy === 'create'} disabled=${!online} onClick=${create}>
               ${roomMode === 'solo' ? '开始独立模拟' : '创建同盟'}
@@ -409,21 +361,5 @@ export function LobbyScreen() {
         </div>
       </section>
     </div>
-  </div>
-  ${fullAsk ? html`<${Modal}
-    open=${true}
-    tone="amber"
-    title="同盟已满"
-    micro="ALLIANCE FULL"
-    width="6.6rem"
-    onClose=${() => setFullAsk(null)}
-    actions=${html`
-      <${Button} variant="secondary" onClick=${() => setFullAsk(null)}>取消<//>
-      <${Button} variant="amber" icon="eye" loading=${busy === 'spectate'} onClick=${() => spectate(fullAsk.code)}>进入观战席<//>
-    `}>
-    <div class="full-ask">
-      <p>同盟 <b class="num">${fullAsk.code}</b> 的 ${MAX_SEATS} 个博士席位已经坐满。</p>
-      <p class="t-lo">仍可以<b>观战者</b>身份进入：不占博士席位、只能观看，对局进行中也能切换观看各位博士。</p>
-    </div>
-  <//>` : null}`;
+  </div>`;
 }
