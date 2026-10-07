@@ -286,6 +286,9 @@ function ScreenCrashed({ error, reset }) {
 
 const ROUTE_COVER_MS = 220;
 const ROUTE_HOLD_MS = 60;
+// A view transition whose update callback never runs (aborted, skipped, or the API threw) must not
+// leave the old screen up: this watchdog swaps directly after that beat.
+const ROUTE_VT_GUARD_MS = 1000;
 
 function routeFadeDisabled() {
   if (typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches) return true;
@@ -314,12 +317,28 @@ function App() {
     }
     if (typeof document.startViewTransition === 'function') {
       setCover(false);
-      const vt = document.startViewTransition(() => new Promise((resolve) => {
+      let swapped = false;
+      // The DOM swap must never depend on the transition machinery: a synchronous throw, an aborted
+      // transition or a callback that never runs would leave the old screen up (the review of PR #271).
+      const swap = () => {
+        if (swapped || shownRef.current !== route) return; // a newer route already took over
+        swapped = true;
         setShown(route);
-        // let the framework commit (microtask) before the browser captures the new state
-        setTimeout(resolve, 0);
-      }));
-      try { vt.types?.add(kind); } catch { /* untyped: the default fade pair runs */ }
+      };
+      try {
+        const vt = document.startViewTransition(() => new Promise((resolve) => {
+          swap();
+          // let the framework commit (microtask) before the browser captures the new state
+          setTimeout(resolve, 0);
+        }));
+        try { vt.types?.add(kind); } catch { /* untyped: the default fade pair runs */ }
+        // a skipped / aborted transition rejects these: not a reason to stay on the old screen
+        if (vt.finished && typeof vt.finished.catch === 'function') vt.finished.catch(() => {});
+        if (vt.updateCallbackDone && typeof vt.updateCallbackDone.catch === 'function') vt.updateCallbackDone.catch(() => swap());
+      } catch {
+        swap(); // the API refused the transition: swap directly
+      }
+      timers.current.push(setTimeout(swap, ROUTE_VT_GUARD_MS));
       return undefined;
     }
     // fallback, no View Transitions: the near-black veil

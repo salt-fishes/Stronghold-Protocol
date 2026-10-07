@@ -7,7 +7,7 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   TITLE_LINES, TITLE_PAD, EMBLEM, layoutTitle, emblemDots, emblemBox, emblemParticles, emblemRow,
-  planStep, collectTargets, createParticleTitle,
+  planStep, collectTargets, createParticleTitle, Particle,
 } from '../../public/js/ui/particleTitle.js';
 
 /** Synthetic RGBA image; `alphaAt(x, y)` decides each pixel's alpha, colour = (10, 200, 30). */
@@ -134,5 +134,25 @@ describe('particleTitle sampling', () => {
   test('a canvas without a 2D context is a clean no-op', () => {
     assert.equal(createParticleTitle(null), null);
     assert.equal(createParticleTitle({ getContext: () => null }), null);
+  });
+});
+
+describe('particleTitle rebuild', () => {
+  test('retarget follows the new raster: position, alpha, size and colour', () => {
+    const orig = Math.random;
+    Math.random = () => 0.5; // deterministic: the colour jitter and the twinkle phase are rolled once
+    try {
+      // emblem:true pins the colour path (no spark roll), so the expectations are exact
+      const p = new Particle({ x: 1, y: 2, r: 0, g: 0, b: 0, a: 1, size: 3, emblem: true }, null);
+      assert.equal(p.css, 'rgb(0,0,0)');
+      p.retarget({ x: 9, y: 8, r: 255, g: 255, b: 255, a: 0, size: 5, emblem: true });
+      assert.equal(p.tx, 9);
+      assert.equal(p.ty, 8);
+      assert.equal(p.size, 5);
+      assert.equal(p.a0, 0.45);
+      assert.equal(p.css, 'rgb(252,252,252)'); // 255 × (0.94 + 0.5·0.1) rounded
+    } finally {
+      Math.random = orig;
+    }
   });
 });

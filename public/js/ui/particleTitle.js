@@ -235,8 +235,17 @@ export function collectTargets(data, width, height, step, scale = 1) {
   return out;
 }
 
+/** The sampled pixel colour, lightly jittered; the gold "telemetry" blips sparkle instead. */
+function particleColor(t, spark, emblem) {
+  const jitter = spark ? 1 : emblem ? 0.94 + Math.random() * 0.1 : 0.86 + Math.random() * 0.28;
+  const r = spark ? 255 : Math.min(255, Math.round(t.r * jitter));
+  const g = spark ? 214 : Math.min(255, Math.round(t.g * jitter));
+  const b = spark ? 120 : Math.min(255, Math.round(t.b * jitter));
+  return `rgb(${r},${g},${b})`;
+}
+
 /** One rasterised pixel: a dot that springs to its glyph position and flees the pointer. */
-class Particle {
+export class Particle {
   /**
    * @param {{x:number,y:number,r:number,g:number,b:number,a:number,emblem?:boolean}} t target
    * @param {{x:number,y:number,delay:number}|null} spawn where it waits before joining (null = on target)
@@ -246,11 +255,7 @@ class Particle {
     this.emblem = !!t.emblem;
     this.accent = !!t.accent;
     this.spark = !this.emblem && Math.random() < SPARK_RATE;
-    const jitter = this.spark ? 1 : this.emblem ? 0.94 + Math.random() * 0.1 : 0.86 + Math.random() * 0.28;
-    const r = this.spark ? 255 : Math.min(255, Math.round(t.r * jitter));
-    const g = this.spark ? 214 : Math.min(255, Math.round(t.g * jitter));
-    const b = this.spark ? 120 : Math.min(255, Math.round(t.b * jitter));
-    this.css = `rgb(${r},${g},${b})`;
+    this.css = particleColor(t, this.spark, this.emblem);
     this.tx = t.x;
     this.ty = t.y;
     this.a0 = 0.45 + 0.55 * t.a;
@@ -264,6 +269,23 @@ class Particle {
     this.x = spawn ? spawn.x : t.x;
     this.y = spawn ? spawn.y : t.y;
     this.delay = spawn ? spawn.delay : 0;
+  }
+
+  /**
+   * A resize / zoom re-points a settled particle at the new raster: position, alpha, size and colour
+   * follow (the rebuild used to retarget the position only, so the logo kept its old dot sizes and
+   * sampled colours — the review of this PR), and its emblem / accent identity travels with the new
+   * target in case the text/emblem split shifted.
+   */
+  retarget(t) {
+    this.tx = t.x;
+    this.ty = t.y;
+    this.a0 = 0.45 + 0.55 * t.a;
+    this.size = t.size != null ? t.size : 1.4 + 0.8 * t.a;
+    this.emblem = !!t.emblem;
+    this.accent = !!t.accent;
+    if (this.emblem) this.spark = false;
+    this.css = particleColor(t, this.spark, this.emblem);
   }
 }
 
@@ -384,13 +406,7 @@ export function createParticleTitle(canvas, opts = {}) {
     } else {
       // Resize: retarget in place (a settled set must not replay the entrance).
       const keep = Math.min(particles.length, targets.length);
-      for (let i = 0; i < keep; i++) {
-        const p = particles[i];
-        const t = targets[i];
-        p.tx = t.x;
-        p.ty = t.y;
-        p.a0 = 0.45 + 0.55 * t.a;
-      }
+      for (let i = 0; i < keep; i++) particles[i].retarget(targets[i]);
       for (let i = keep; i < targets.length; i++) particles.push(new Particle(targets[i], null));
       if (particles.length > targets.length) particles.length = targets.length;
     }

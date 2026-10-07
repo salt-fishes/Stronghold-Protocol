@@ -18,7 +18,7 @@ import { toast } from '../ui/toasts.js';
 import { net, identity } from '../net.js';
 import { store, useStore, shallowEqual } from '../store.js';
 import { data, useData } from '../data.js';
-import { FullscreenButton, detectFeatures } from '../ui/device.js';
+import { FullscreenButton, detectFeatures, reducedMotion } from '../ui/device.js';
 import { LangToggle, useLang } from '../ui/lang.js';
 import { t, N_ } from '../../../shared/i18n.js';
 import { scriptOf } from '../../../shared/i18nPacks.js';
@@ -209,8 +209,10 @@ export function TitleScreen() {
   const start = () => {
     if (!valid) { toast(t('请输入博士代号'), 'warn'); return; }
     if (starting) return;
+    // Reduced motion: the logo is a static frame, so there is no burst to wait for — enter at once.
+    const reduced = reducedMotion() || (typeof document !== 'undefined' && document.documentElement.classList.contains('sp-reduced-motion'));
     const ctrl = particlesRef.current;
-    if (ctrl) {
+    if (ctrl && !reduced) {
       // One exit beat: the logo bursts and finishes (360ms) before the lobby takes over; the timer
       // is cleared on unmount.
       ctrl.burst();
@@ -258,8 +260,8 @@ export function TitleScreen() {
 
     <main class="title-main">
       <div class="title-core">
-        <div class=${`title-particle${particlesOn ? ' is-live' : ''}`}>
-          <canvas class="title-particles" ref=${canvasRef} aria-hidden="true"></canvas>
+        <div class=${`title-particle${particlesOn && !alphabetic ? ' is-live' : ''}`}>
+          ${alphabetic ? null : html`<canvas class="title-particles" ref=${canvasRef} aria-hidden="true"></canvas>`}
           <${Emblem} />
           ${alphabetic ? null : html`<div class="title-en">
             <span class="title-en__a">STRONGHOLD PROTOCOL</span>
