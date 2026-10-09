@@ -105,6 +105,7 @@ import { encode, isDroppable, isErrCode, sendRaw, sendSession } from './net.js';
 import { getData as defaultGetData, lookup } from './data.js';
 import { Match as DefaultMatch } from './match/Match.js';
 import { KITTED_CHARS } from './sim/content/kits/index.js';
+import { reportMatch } from './accountLink.js';
 
 /** Room code alphabet: uppercase letters without I and O (and no digits, so no 0/1). */
 export const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
@@ -775,6 +776,7 @@ export class Lobby {
     if (ctx.ended || !ctx.live || room.matchCtx !== ctx || room.disposed) return;
     ctx.ended = true;
     room.lastSummary = summary ?? null;
+    reportMatch(room, summary); // sp-accounts: fire-and-forget report; no-op without SP_ACCOUNT_TOKEN
     room.match = null;
     room.matchCtx = null;
     room.matchKey = null;
@@ -984,6 +986,7 @@ export class Lobby {
   humanSeat(idx, session) {
     return {
       seat: idx, playerId: session.playerId, name: session.name, isBot: false, ready: false, connected: session.connected, left: false,
+      account: session.account ?? null, // sp-accounts: gateway-bound name, never broadcast (the room state picks fields)
       loadout: session.loadout || null,
       ops: session.ops || null,
       notOwned: session.notOwned || null,

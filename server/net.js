@@ -41,6 +41,7 @@ import { randomBytes } from 'node:crypto';
 import { isIP } from 'node:net';
 import { C2S, validateC2S } from '../shared/protocol.js';
 import { ERR, ERR_TEXT, NAME_MAX_LEN, PROTOCOL_VERSION } from '../shared/constants.js';
+import { accountFromRequest } from './accountLink.js';
 
 /** Tunables (all overridable through the Network / SessionRegistry constructors). */
 export const NET_DEFAULTS = Object.freeze({
@@ -486,6 +487,8 @@ class Connection {
     this.alive = true;
     /** @type {Session | null} */
     this.session = null;
+    /** @type {string | null} account name injected by the account gateway (X-SP-User); null when the link is off */
+    this.account = null;
     this.bucket = new TokenBucket(opts.ratePerSec, opts.rateBurst, now);
     this.heavy = new TokenBucket(opts.heavyPerSec, opts.heavyBurst, now);
     this.dropWindowAt = now;
@@ -558,6 +561,7 @@ export class Network {
   handleConnection(ws, req) {
     if (this.closed) { try { ws.close(CLOSE.SHUTDOWN, 'server shutdown'); } catch { /* ignore */ } return; }
     const conn = new Connection(ws, clientAddress(req, this.opts.trustProxy), this.now(), this.opts);
+    conn.account = accountFromRequest(req);
     this.conns.set(ws, conn);
     if (conn.key) this.connsPerKey.set(conn.key, (this.connsPerKey.get(conn.key) || 0) + 1);
     ws.on('message', (data, isBinary) => {
@@ -667,6 +671,7 @@ export class Network {
       session.disconnectedAt = null;
     }
     session.name = name;
+    session.account = conn.account || session.account || null; // sp-accounts: bound by the gateway (no-op without SP_ACCOUNT_TOKEN)
     session.lastSeen = now;
     session.addr = conn.ip;
     session.limitKey = conn.key;
