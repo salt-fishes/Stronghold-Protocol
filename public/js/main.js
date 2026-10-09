@@ -108,7 +108,8 @@ function schedulePendingJoin() {
     }
     joinInFlight = true;
     try {
-      await net.request('room.join', { code });
+      // sp-accounts (M6): a `spectate=1` deep link enters the room as a spectator instead of a player.
+      await net.request(/[?&]spectate=1(?:&|$)/.test(location.search) ? 'room.spectate' : 'room.join', { code });
     } catch (err) {
       toastError(err);
     } finally {
