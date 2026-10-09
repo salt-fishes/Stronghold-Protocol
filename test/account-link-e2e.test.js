@@ -96,3 +96,32 @@ test('without a token: the same match reports nothing', async (t) => {
   await delay(200);
   assert.equal(acc.seen.length, 0, 'the link is off: no report');
 });
+
+test('M6: /rooms.json lists live rooms with the bound account (loopback only)', async (t) => {
+  const prevToken = process.env.SP_ACCOUNT_TOKEN;
+  process.env.SP_ACCOUNT_TOKEN = 'e2e-token'; // enables the X-SP-User binding (accountFromRequest)
+  const srv = await startServer({ port: 0, quiet: true, MatchClass: StubMatch });
+  t.after(async () => {
+    await srv.close();
+    restore('SP_ACCOUNT_TOKEN', prevToken);
+  });
+
+  const c = await TestClient.connect(`ws://127.0.0.1:${srv.port}/ws`, { wsOptions: { headers: { 'x-sp-user': 'alice' } } });
+  const w = await c.hello('Alice');
+  c.id = w.playerId;
+  c.token = w.token;
+  await c.request({ t: 'room.create', mode: 'coop', difficulty: 'HARD' });
+  await c.waitFor('room.state', (s) => s.hostId === c.id);
+
+  const res = await fetch(`http://127.0.0.1:${srv.port}/rooms.json`);
+  assert.equal(res.status, 200);
+  const doc = await res.json();
+  const room = doc.rooms.find((r) => r.seats.some((s) => s && s.account === 'alice'));
+  assert.ok(room, 'the room appears with its gateway-bound account');
+  assert.equal(room.mode, 'coop');
+  assert.equal(room.difficulty, 'HARD');
+  assert.equal(room.humans, 1);
+  assert.equal(room.inMatch, false);
+  assert.equal(room.seats[0].name, 'Alice');
+  await c.terminate();
+});

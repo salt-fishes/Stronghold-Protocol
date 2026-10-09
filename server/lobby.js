@@ -287,6 +287,33 @@ export class Lobby {
     return { rooms: this.rooms.size, matches, humans, bots, spectators };
   }
 
+  /**
+   * sp-accounts (M6): the live room list for the account gateway's portal — rooms with at least one
+   * human, each seat carrying the gateway-bound account name (null without the account link). Read
+   * by `GET /rooms.json`, which only answers loopback peers (server/http/routes.js).
+   */
+  roomsPublic(limit = 50) {
+    const out = [];
+    for (const room of this.rooms.values()) {
+      if (room.disposed) continue;
+      const seats = room.seats.map((s) => (s ? {
+        seat: s.seat, name: s.name, isBot: s.isBot,
+        account: s.isBot ? null : (s.account || null),
+        connected: !!(s.connected && !s.left),
+      } : null));
+      const humans = seats.filter((s) => s && !s.isBot).length;
+      if (!humans) continue;
+      out.push({
+        code: room.code, mode: room.mode, difficulty: room.difficulty,
+        inMatch: !!room.match, matchCount: room.matchCount || 0,
+        humans, bots: seats.filter((s) => s && s.isBot).length,
+        spectators: room.spectators.length, seats,
+      });
+    }
+    out.sort((a, b) => (a.inMatch === b.inMatch ? 0 : a.inMatch ? 1 : -1));
+    return out.slice(0, limit);
+  }
+
   // ---------------------------------------------------------------------------------------------------
   // net.js handler interface
   // ---------------------------------------------------------------------------------------------------

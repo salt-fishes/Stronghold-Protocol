@@ -14,6 +14,12 @@ import { setSecurityHeaders, sendError, sendJson, splitUrl } from './common.js';
 
 const MAX_URL_LENGTH = 4096;
 
+/** Loopback peers only (the account gateway): 127.0.0.1 / ::1, with or without the v4-mapped prefix. */
+const isLoopback = (addr) => {
+  const a = String(addr || '');
+  return a === '127.0.0.1' || a === '::1' || a === '::ffff:127.0.0.1';
+};
+
 /**
  * The GET /healthz body.
  * @param {{ startedAt: number, network: import('../net.js').Network, registry: import('../net.js').SessionRegistry,
@@ -49,6 +55,14 @@ export function createRequestHandler({ serveStatic, health, log }) {
     }
     if (parts.rawPath === '/healthz') {
       sendJson(req, res, 200, healthReport(health));
+      return;
+    }
+    // sp-accounts (M6): the live room list, read by the account gateway to render the portal's room
+    // page. Loopback only — the gateway never forwards this path (it answers 404 itself), so the
+    // list stays private to the account service.
+    if (parts.rawPath === '/rooms.json') {
+      if (!isLoopback(req.socket.remoteAddress)) { sendError(req, res, 404, '页面不存在 · Not found'); return; }
+      sendJson(req, res, 200, { ok: true, rooms: health.lobby.roomsPublic() });
       return;
     }
     await serveStatic(req, res, parts.rawPath, parts.query);
